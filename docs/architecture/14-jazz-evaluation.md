@@ -1,145 +1,93 @@
 # 14 — Jazz Evaluation and Integration
 
-**Decision gate result: Jazz's core runs on Bun.** The one open risk from doc 11
-(does Jazz's server worker run on Bun?) is retired. What remains is an architecture
-choice about *how much* to adopt and *when*, because it reshapes the frontend data
-flow — hence deciding it before building more UI.
+**We use `jazz-tools@2.0-alpha` (the version the Jazz docs target).** 2.0 is a
+ground-up redesign: Jazz is now a **local-first relational database** (tables +
+SQL-like queries + migrations + row policies + JWT auth), *not* the 0.x CoValue/CRDT
+model. The `latest` npm tag is still `0.20.x` (CoValue), but that paradigm is being
+retired, so we committed to the alpha.
+
+The one gate from doc 11 (does Jazz's server run on Bun?) is retired: verified.
 
 ## What was verified (empirically, on Bun 1.3.14)
 
-Installed `jazz-tools@0.20.19`, `cojson@0.20.19`, `jazz-run@0.20.19` and ran a probe:
+`jazz-tools@2.0.0-alpha.53`:
 
 | Check | Result |
 |-------|--------|
-| WASM crypto init (`cojson/crypto/WasmCrypto`) | ✅ initializes on Bun |
-| `LocalNode.withNewlyCreatedAccount` (account + node) | ✅ |
-| CoValue write/read (`Group.createMap` → set/get) | ✅ round-trips |
-| `jazz-tools` + `jazz-tools/worker` import | ✅ (`co`, `startWorker`) |
-| Native builds required? | ❌ — WASM backend avoids NAPI; only `@parcel/watcher` (a `jazz-run` CLI dep) postinstall was blocked, irrelevant to runtime |
+| Define schema (`s.table` / `s.defineApp`) + import | ✅ |
+| Start a local server (`startLocalJazzServer({ inMemory: true })`) | ✅ (native server runs on Bun) |
+| Backend context insert (`createJazzContext(...).asBackend(schema).insert(...)`) | ✅ |
+| Query back (`db.all(app.messages.where({ sessionId }))`) | ✅ round-trips |
+| Native builds required | WASM/native server; supported binary targets (macOS/Linux/Windows); no manual build |
+| Frontend bundle | **~82 KB gzipped** (down from 433 KB on 0.20 — 2.0 drops prosemirror/tiptap) |
 
-Surfaces available: `jazz-tools/worker` (server worker), `jazz-tools/svelte`
-(Svelte 5 runes bindings), `jazz-tools/better-auth/auth/{server,svelte}` (auth),
-`jazz-tools/ssr`. Sync server: `jazz-run sync` (self-hostable WS server,
-`--in-memory` or `--db file`; Jazz Cloud is the hosted alternative).
+## What Jazz 2.0 is
 
-## What Jazz is (in one paragraph)
-
-A local-first sync engine. Data lives in **CoValues** (CRDT objects: `CoMap`,
-`CoList`, `CoFeed`, …) owned by **Accounts** and permissioned via **Groups**. Clients
-and a backend **worker** each hold a local node; CoValues sync through a sync server
-and merge via CRDT. Reads are reactive subscriptions; writes are permissioned by
-Group role.
+A local-first **relational** database. You `s.defineApp({...})` a schema of `s.table`s
+with typed columns, query with a SQL-like builder (`app.messages.where({...})`), and it
+syncs local-first through a server (`jazz-tools server`) with row-level permission
+policies and JWT/local-first auth. A backend connects via `createJazzContext(...)`; a
+browser via `createJazzClient(...)` + `JazzSvelteProvider` + reactive `QuerySubscription`.
 
 ## How it maps onto Akko (CQRS preserved)
 
-The golden rule from doc 04 holds: **Jazz is a projection of canonical SQLite, never
-the source of truth; commands never flow through Jazz.**
+The golden rule (doc 04) holds: **Jazz is a projection of canonical SQLite, never the
+source of truth; commands never flow through Jazz.**
 
 ```
 frontend ──command (attributed, WS/HTTP)──▶ backend: mailbox → single writer → pi → SQLite (canonical)
                                                                    │
-                                              backend WORKER projects committed entries ▼
-frontend ◀──── reactive CoValue subscription (jazz-tools/svelte) ──── Jazz CoValues (read model)
+                                     backend JazzProjector inserts rows ▼
+frontend ◀──── reactive query (QuerySubscription) ──── Jazz `messages` table (read model)
 ```
 
-| Akko concept | Jazz concept |
-|--------------|--------------|
-| `Principal` | Account |
-| `Workspace` / `Membership` (roles) | Group (members + read/write roles) |
-| Projected conversation (read model) | per-session `CoList` of message `CoMap`s |
-| Presence / typing / drafts (ephemeral) | client-writable CoValues in a shared Group |
+| Akko concept | Jazz 2.0 concept |
+|--------------|------------------|
+| Projected conversation (read model) | rows in a `messages` **table**, keyed by `sessionId` |
+| `Principal` attribution | a `authorId` column |
+| Workspace read-ACL (future) | row-level **policies** |
 | Canonical conversation (source of truth) | **stays in SQLite** (doc 04) |
-| Deferred auth | `jazz-tools/better-auth` integration |
+| Live token stream | stays on the **WS** (only finalized messages are projected) |
+| Deferred auth | JWT / `LocalFirstAuth` |
 
-- **Backend worker** (`startWorker`, runs on Bun ✅) holds the server Account and is
-  the **single writer of canonical-projection CoValues**. It implements the
-  `Projector` seam (doc 04) — a sibling sink fed by `SessionRuntime`.
-- **Frontend** subscribes to CoValues via `jazz-tools/svelte`. This **replaces the
-  client-side event reducer** (`conversation.ts`) and the event-fanout WebSocket for
-  *reads*.
-- **Commands stay out-of-band** (WS/HTTP → mailbox → `authorize()` → single writer).
-  Group permissions make canonical projection CoValues **read-only to clients**.
-- **Identity/ACL fit is strong**: Principal→Account, Workspace→Group. Group ACL can
-  become the substrate for *read* authorization; *write* authorization stays on the
-  command path. Adopting Jazz also front-loads the deferred **auth** story via Better
-  Auth.
+The relational model is a **cleaner fit than CoValues**: the `messages` table is a near
+1:1 shape with our canonical SQLite, and "project" = "insert the same row into a synced
+table."
 
-## The streaming question (must decide)
+## What changed vs. the 0.20 CoValue slice
 
-Live token-by-token assistant text is high-frequency. Options:
-1. **Ephemeral streaming stays on the WS** (or a Jazz `CoFeed`/ephemeral CoValue);
-   only the **finalized message** becomes a canonical projection CoValue. Keeps
-   streaming low-latency; Jazz holds durable/collab state. **Recommended.**
-2. Stream deltas straight into a CoValue field — simpler model, but CRDT overhead per
-   token and more sync traffic.
-
-Recommendation: keep streaming ephemeral (WS or CoFeed), commit finalized messages to
-canonical CoValues. This is consistent with "ephemeral collab state is disposable"
-(doc 04).
-
-## What changes across the stack if we adopt
-
-1. **Frontend reads** — replace `conversation.ts` + WS event handling with Jazz
-   subscriptions. `AkkoClient` shrinks to: commands out + Jazz for state. *(This is the
-   part that becomes throwaway if we build backlog/history/more UI on the current model
-   first — the reason to decide now.)*
-2. **Backend** — add the worker + a **`JazzProjector`** (implements `Projector`) wired
-   into `SessionRuntime` as a sibling sink.
-3. **Shared schema** — a small package of CoValue schemas (Session, Message,
-   Workspace) imported by worker + frontend.
-4. **Identity/ACL** — realize Principal→Account, Workspace→Group (interfaces already
-   exist in `core`; this is their concrete mapping).
-5. **Infra** — run `jazz-run sync` (self-hosted) alongside the gateway; another
-   process (or Jazz Cloud).
+- `@akko/schema`: `co.map`/`co.list` CoValues → `s.table` relational app.
+- `@akko/server` `JazzProjector`: create Group + push to a CoList → **insert a row**
+  via a backend `Db` (`createJazzContext(...).asBackend(schema)`). Per-session CoValue
+  ids disappear; the key is just `sessionId`.
+- Frontend: `CoState` on a CoValue → `QuerySubscription(() => app.messages.where(...))`;
+  provider is `JazzSvelteProvider` + `createJazzClient` + `LocalFirstAuth`.
+- Deps: dropped `cojson`/`jazz-run`; the CLI is now `jazz-tools server`.
 
 ## Costs / risks
 
-- **Dependency weight**: `jazz-tools` pulls prosemirror/tiptap/zod. Tree-shakeable;
-  worker + svelte subsets are what matter — check frontend bundle size.
-- **Version velocity**: 0.20.x, fast-moving (like pi). Pin versions.
-- **Discipline required**: Jazz must remain a *projection* of SQLite. If canonical
-  conversation ever lives only in a CoValue, we've violated doc 04 and lost the
-  single-writer/rehydration guarantees. The CRDT is for sync/merge of the projection +
-  ephemeral state.
-- **Complexity vs. payoff**: for single-user it's arguably overkill; the payoff
-  (multiplayer, offline, local-first) is real but not needed *yet*.
-
-## Recommendation
-
-The direction is sound and Bun-viable, and the identity/ACL fit is a bonus (it also
-answers deferred auth). But adopt **incrementally**, not big-bang:
-
-1. Keep the **WS command path** — it's the write channel either way (not throwaway).
-2. **Prove a thin vertical Jazz slice first**: backend worker + a minimal
-   `Session`/`Message` CoValue schema + a `JazzProjector` fed by `SessionRuntime` +
-   frontend rendering one session from a CoValue subscription. This validates
-   backend-projects → Jazz → Svelte-renders end-to-end on our stack before committing
-   the whole frontend to it.
-3. Only after the slice proves out: migrate frontend reads off the reducer, add
-   presence, then Better Auth.
-
-Concretely: **do the thin vertical slice next**, behind the existing seams
-(`Projector`, `EventBus`), so the current WS path keeps working and we can compare.
+- **Alpha** — `2.0.0-alpha.x`, churning; expect breaking changes. Pin the exact version.
+- New surface: **schema deploy/migrations, JWT auth, row policies** — more than CoValue
+  sync, but conventional DB concepts.
+- Still the discipline rule: Jazz remains a *projection* of SQLite; the canonical
+  conversation never lives only in a Jazz table.
+- Upside banked: **much smaller bundle**, and a data model that matches ours.
 
 ## Status
 
-**Thin vertical slice implemented and verified** (behind the existing seams; the WS path
-still works unchanged):
+**Migrated to 2.0-alpha and verified** (behind the existing seams; the WS path is
+unchanged and Jazz is opt-in):
 
-- `@akko/schema` — `Conversation` / `Message` CoValue schemas (`co`/`z`).
-- `@akko/server` `JazzProjector` (implements `SessionProjector`) + worker bootstrap
-  (`startWorker`, WASM crypto). Wired into the registry as a sibling entry-sink; the
-  gateway exposes each session's `jazzId`. Enabled in `main.ts` only when
-  `JAZZ_SYNC` + worker creds are set (else `NullProjector` behavior).
-- `@akko/web` — `JazzSvelteProvider` (guest mode) + a `CoState`-backed message view,
-  toggled against the live WS view per session.
-- Automated proof: `jazz-projector.test.ts` — the projector (as the worker account)
-  writes a public CoValue and a *separate* account reads the messages back, in-process
-  (no network), with attribution. 50 tests green overall; `svelte-check` + `vite build`
-  pass.
+- `@akko/schema` — relational `messages` table + `defineApp`.
+- `@akko/server` `JazzProjector` inserts finalized messages (with `authorId`) via a
+  backend `Db`; `createBackendDb` connects to the sync server; `main.ts` enables it when
+  `JAZZ_SYNC` + `JAZZ_APP_ID` + `JAZZ_BACKEND_SECRET` are set (else off).
+- `@akko/web` — `JazzSvelteProvider` (local-first auth) + a `QuerySubscription`-backed
+  message view, gated behind `VITE_JAZZ=1`, toggled against the live WS view.
+- Automated proof: `jazz-projector.test.ts` runs an in-memory local Jazz server, the
+  projector inserts rows, and a query reads them back — in-process on Bun. 50 tests
+  green; `svelte-check` + `vite build` pass (~82 KB gzipped).
 
-Known costs observed: the frontend bundle grew to ~433 KB gzipped (jazz-tools pulls
-prosemirror/tiptap) — code-splitting / narrower imports are a follow-up. Live
-streaming stays on the WS; only finalized messages are projected. Next: run against a
-real `jazz-run sync` server, then migrate the default frontend read path to Jazz,
-presence, and Better Auth.
+Next: run against a standalone `jazz-tools server` end-to-end, add row policies for
+workspace read-ACL, migrate the default frontend read path to Jazz, presence, and JWT
+auth.

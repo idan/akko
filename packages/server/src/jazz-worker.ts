@@ -1,40 +1,38 @@
 /**
- * Jazz worker bootstrap for the backend (doc 14).
+ * Jazz 2.0 backend context for the server (doc 14).
  *
- * Starts the server-side Jazz worker account and connects it to a sync server, with the
- * WASM crypto backend (verified on Bun). The worker becomes the active account so the
- * `JazzProjector` can create/write CoValues.
+ * Connects a backend `Db` to a running Jazz sync server (`jazz-tools server`). The
+ * backend is authenticated by `backendSecret` and writes rows into the shared app
+ * schema. Runs on Bun (verified: schema define + server + backend insert + query).
  *
- * Dev setup (one-time): create a worker account and export its env vars:
- *   bunx jazz-run account create --name akko-worker
- *   export JAZZ_SYNC=ws://localhost:4200 JAZZ_WORKER_ACCOUNT=... JAZZ_WORKER_SECRET=...
+ * Dev setup: run `bun run dev:sync` (`jazz-tools server`), then export:
+ *   JAZZ_SYNC=<server url>  JAZZ_APP_ID=<app id>  JAZZ_BACKEND_SECRET=<secret>
  */
-import { WasmCrypto } from "cojson/crypto/WasmCrypto";
-import { startWorker } from "jazz-tools/worker";
+import { createJazzContext, type Db } from "jazz-tools/backend";
+import { app } from "@akko/schema";
 
 export interface AkkoWorkerConfig {
-  syncServer: string;
-  accountID: string;
-  accountSecret: string;
+  serverUrl: string;
+  appId: string;
+  backendSecret: string;
 }
 
-/** Read worker config from env; returns undefined if not fully configured (projector disabled). */
+/** Read backend config from env; undefined if not fully configured (projector disabled). */
 export function workerConfigFromEnv(): AkkoWorkerConfig | undefined {
-  const syncServer = process.env.JAZZ_SYNC;
-  const accountID = process.env.JAZZ_WORKER_ACCOUNT;
-  const accountSecret = process.env.JAZZ_WORKER_SECRET;
-  if (syncServer && accountID && accountSecret) return { syncServer, accountID, accountSecret };
+  const serverUrl = process.env.JAZZ_SYNC;
+  const appId = process.env.JAZZ_APP_ID;
+  const backendSecret = process.env.JAZZ_BACKEND_SECRET;
+  if (serverUrl && appId && backendSecret) return { serverUrl, appId, backendSecret };
   return undefined;
 }
 
-/** Start the worker; it registers as the active account. */
-export async function startAkkoWorker(config: AkkoWorkerConfig): Promise<void> {
-  const crypto = await WasmCrypto.create();
-  await startWorker({
-    syncServer: config.syncServer,
-    accountID: config.accountID,
-    accountSecret: config.accountSecret,
-    crypto,
-    asActiveAccount: true,
+/** Create a backend-authenticated Db connected to the sync server. */
+export function createBackendDb(config: AkkoWorkerConfig): Db {
+  const context = createJazzContext({
+    appId: config.appId,
+    serverUrl: config.serverUrl,
+    backendSecret: config.backendSecret,
+    driver: { type: "memory" },
   });
+  return context.asBackend(app.wasmSchema);
 }

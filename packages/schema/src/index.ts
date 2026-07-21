@@ -1,30 +1,29 @@
 /**
- * @akko/schema — Jazz CoValue schemas (doc 14).
+ * @akko/schema — Jazz 2.0 relational schema (doc 14).
  *
- * The shared, dependency-light projection schema used by the backend worker (to write)
- * and the frontend (to read). These CoValues are a *projection* of the canonical SQLite
- * conversation — never the source of truth (doc 04). Live token streaming stays on the
- * WS; only finalized messages are projected here.
+ * Jazz 2.0 is a local-first relational database (tables + SQL-like queries), not the
+ * 0.x CoValue/CRDT model. The projected conversation is a `messages` table keyed by
+ * `sessionId` — a near 1:1 shape with our canonical SQLite (doc 04). It is a
+ * *projection*, never the source of truth; live token streaming stays on the WS and
+ * only finalized messages are projected here.
+ *
+ * The same `app` is imported by the backend (to insert) and the frontend (to query),
+ * so they share one schema.
  */
-import { co, z } from "jazz-tools";
+import { schema as s } from "jazz-tools";
 
-/** One finalized message in the projected conversation. */
-export const Message = co.map({
-  role: z.literal(["user", "assistant"]),
-  text: z.string(),
-  createdAt: z.number(),
-  /** Attribution: the principal id that authored a user message (doc 04). */
-  authorId: z.optional(z.string()),
-});
-export type Message = co.loaded<typeof Message>;
+export const appSchema = {
+  messages: s.table({
+    sessionId: s.string(),
+    role: s.string(),
+    text: s.string(),
+    createdAt: s.timestamp(),
+    /** Attribution: principal id for user messages; "" for agent output (doc 04). */
+    authorId: s.string(),
+  }),
+};
 
-/** The projected conversation for one session: metadata + an ordered list of messages. */
-export const Conversation = co.map({
-  sessionId: z.string(),
-  title: z.string(),
-  messages: co.list(Message),
-});
-export type Conversation = co.loaded<typeof Conversation>;
+export const app = s.defineApp(appSchema);
 
 /** Extract renderable text from a pi message's `content` (string or content blocks). */
 export function textOfContent(content: unknown): string {

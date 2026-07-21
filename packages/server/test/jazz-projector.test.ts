@@ -1,35 +1,30 @@
 /**
- * Proves the Jazz projection path in-process (doc 14): the JazzProjector (as the worker
- * account) writes a public Conversation CoValue, and a *separate* account reads the
- * projected messages back — validating backend-projects -> Jazz -> client-reads without
- * a network sync server.
+ * Proves the Jazz 2.0 projection path in-process (doc 14): the JazzProjector writes
+ * finalized messages as rows into the `messages` table via a backend context connected
+ * to a local in-memory Jazz server, and a query reads them back — validating
+ * backend-projects -> Jazz relational store on Bun, no external server.
  */
-import { beforeAll, describe, expect, test } from "bun:test";
-import { createJazzTestAccount, setupJazzTestSync } from "jazz-tools/testing";
-import { Conversation } from "@akko/schema";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { createJazzContext, type Db } from "jazz-tools/backend";
+import { startLocalJazzServer, type LocalJazzServerHandle } from "jazz-tools/testing";
+import { app } from "@akko/schema";
 import type { CommittedEntry, EntryId, PrincipalId, SessionId, SessionRef, WorkspaceId } from "@akko/core";
 import { JazzProjector } from "../src/jazz-projector.ts";
 
-/** Narrowed view of a loaded Conversation for test assertions. */
-type LoadedConvo = {
-  title: string;
-  sessionId: string;
-  messages: Array<{ role: string; text: string; authorId?: string }>;
-} | null | undefined;
-const loadConvo = async (id: string): Promise<LoadedConvo> =>
-  (await Conversation.load(id, {
-    loadAs: clientAccount,
-    resolve: { messages: { $each: true } },
-  })) as unknown as LoadedConvo;
-
-let clientAccount: Awaited<ReturnType<typeof createJazzTestAccount>>;
+let server: LocalJazzServerHandle;
+let db: Db;
 
 beforeAll(async () => {
-  await setupJazzTestSync();
-  // Worker = active account (the projector writes as this account).
-  await createJazzTestAccount({ isCurrentActiveAccount: true });
-  // A separate account that will read the public projection (stands in for the browser).
-  clientAccount = await createJazzTestAccount();
+  server = await startLocalJazzServer({ inMemory: true });
+  db = createJazzContext({
+    appId: server.appId,
+    serverUrl: server.url,
+    backendSecret: server.backendSecret,
+    driver: { type: "memory" },
+  }).asBackend(app.wasmSchema);
+});
+afterAll(async () => {
+  await server?.stop();
 });
 
 function ref(id: string, title: string): SessionRef {
@@ -49,36 +44,28 @@ function entry(id: string, msg: unknown, actorId?: string): CommittedEntry {
 const userMsg = (text: string) => ({ role: "user", content: text });
 const assistantMsg = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
 
-describe("JazzProjector", () => {
-  test("projects finalized messages into a public CoValue readable by another account", async () => {
-    const projector = new JazzProjector({ publicRead: true });
+describe("JazzProjector (Jazz 2.0 relational)", () => {
+  test("projects finalized messages as queryable rows keyed by sessionId", async () => {
+    const projector = new JazzProjector(db);
     const r = ref("ses_p1", "Greeting");
-    const jazzId = projector.ensureSession(r);
-    expect(jazzId).toStartWith("co_");
-    expect(projector.projectionId(r.id)).toBe(jazzId);
+    expect(projector.ensureSession(r)).toBe("ses_p1");
+    expect(projector.projectionId(r.id)).toBe("ses_p1");
 
     await projector.onEntry(r.id, entry("e1", userMsg("my name is Ada"), "prn_alice"));
     await projector.onEntry(r.id, entry("e2", assistantMsg("Hi Ada")));
 
-    const loaded = await loadConvo(jazzId);
-    expect(loaded?.title).toBe("Greeting");
-    expect(loaded?.sessionId).toBe("ses_p1");
-    expect(loaded?.messages?.map((m) => `${m.role}:${m.text}`)).toEqual([
-      "user:my name is Ada",
-      "assistant:Hi Ada",
-    ]);
-    expect(loaded?.messages?.[0]?.authorId).toBe("prn_alice");
-    expect(loaded?.messages?.[1]?.authorId).toBeUndefined();
+    const rows = await db.all(app.messages.where({ sessionId: "ses_p1" }));
+    expect(rows.map((m) => `${m.role}:${m.text}`)).toEqual(["user:my name is Ada", "assistant:Hi Ada"]);
+    expect(rows[0]?.authorId).toBe("prn_alice");
+    expect(rows[1]?.authorId).toBe("");
   });
 
-  test("ignores non-conversation entries and unknown sessions", async () => {
-    const projector = new JazzProjector({ publicRead: true });
-    const r = ref("ses_p2", "X");
-    projector.ensureSession(r);
-    await projector.onEntry(r.id, entry("e1", { role: "toolResult", content: "x" }));
-    await projector.onEntry("ses_unknown" as SessionId, entry("e2", userMsg("dropped")));
+  test("ignores non-conversation entries; rows are isolated per session", async () => {
+    const projector = new JazzProjector(db);
+    projector.ensureSession(ref("ses_p2", "X"));
+    await projector.onEntry("ses_p2" as SessionId, entry("e1", { role: "toolResult", content: "x" }));
 
-    const loaded = await loadConvo(projector.projectionId(r.id)!);
-    expect(loaded?.messages?.length).toBe(0);
+    const rows = await db.all(app.messages.where({ sessionId: "ses_p2" }));
+    expect(rows.length).toBe(0);
   });
 });

@@ -140,10 +140,11 @@ session-facing view over `NodeDirectory`.
    pure conversation reducer; responsive/mobile layout. Wire types extracted to
    `@akko/protocol` so the browser build pulls no `bun`/pi runtime. Backlog fetch for
    rehydrated sessions, multi-client attribution rendering, and auth next.
-8. ◑ **Jazz projector** — thin vertical slice done (doc 14): `@akko/schema` CoValue
-   schemas, backend `JazzProjector` + worker, frontend `CoState` read view (toggle),
-   proven by an in-process cross-account test. Next: real sync server, migrate default
-   reads to Jazz, presence, Better Auth.
+8. ◑ **Jazz projector** — thin vertical slice done on **`jazz-tools@2.0-alpha`**
+   (relational DB, doc 14): `@akko/schema` `messages` table, backend `JazzProjector`
+   inserting rows via a backend `Db`, frontend `QuerySubscription` read view (opt-in via
+   `VITE_JAZZ`), proven by an in-process test against a local Jazz server. Bundle ~82 KB
+   gzipped. Next: standalone server e2e, row policies, migrate default reads, JWT auth.
 9. Later: container isolation, `MemoryProvider` + `SearchIndex`,
    `HostResolver`/`NodeDirectory` + node↔Hub link (distributed execution, doc 12).
 

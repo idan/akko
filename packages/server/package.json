@@ -13,10 +13,6 @@
     "@akko/runtime": "workspace:*",
     "@akko/protocol": "workspace:*",
     "@akko/schema": "workspace:*",
-    "jazz-tools": "^0.20.19",
-    "cojson": "^0.20.19"
-  },
-  "devDependencies": {
-    "jazz-run": "^0.20.19"
+    "jazz-tools": "2.0.0-alpha.53"
   }
 }
