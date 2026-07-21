@@ -1,0 +1,19 @@
+{
+  "name": "akko",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "//": "Runtime: Bun (see docs/architecture/11-runtime-evaluation.md). Deno remains a verified fallback; the only runtime-coupled seam is the SQLite driver behind ConversationStore (packages/core/src/sqlite.ts).",
+  "scripts": {
+    "typecheck": "tsc -p packages/core/tsconfig.json",
+    "dev:server": "bun run packages/server/src/main.ts",
+    "dev:web": "bun run --filter '@akko/web' dev"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}

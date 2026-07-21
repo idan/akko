@@ -1,0 +1,22 @@
+{
+  "name": "@akko/core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Akko core domain model and interfaces (design skeleton). Built on top of the pi coding agent.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-agent-core": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-ai": { "optional": true },
+    "@earendil-works/pi-agent-core": { "optional": true }
+  }
+}
