@@ -36,16 +36,28 @@ bun run dev:web        # Vite dev server on :5173, proxying /api + /ws to the ga
 # open http://localhost:5173
 ```
 
-Optional — enable the Jazz projection (doc 14, `jazz-tools@2.0-alpha` relational DB):
+Optional — enable the Jazz projection (doc 14, `jazz-tools@2.0-alpha` relational DB).
+Three processes: the standalone Jazz server, the backend (deploys schema + projects),
+and the frontend (queries the Jazz table):
 
 ```bash
-bun run dev:sync                          # local Jazz server (jazz-tools server)
-# note its app id + backend secret, then:
-JAZZ_SYNC=<server url> JAZZ_APP_ID=<app id> JAZZ_BACKEND_SECRET=<secret> \
-  bun run dev:server                      # projector inserts finalized messages
-VITE_JAZZ=1 bun run dev:web               # frontend queries the Jazz messages table
+# 1) standalone Jazz server (in-memory, app id fixed for dev, local-first auth on)
+bun run dev:sync
+
+# 2) backend: deploys schema+policies on boot, then projects finalized messages
+JAZZ_SYNC=http://localhost:4200 \
+  JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf \
+  JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin \
+  bun run dev:server
+
+# 3) frontend: queries the Jazz messages table (opt-in)
+VITE_JAZZ=1 bun run dev:web
 # in the chat header, toggle "Live" <-> "Jazz"
 ```
+
+Verified end-to-end: a real prompt streams over the WS, the backend projects the
+finalized user + assistant messages into the standalone Jazz server, and they are
+queryable there.
 
 ```bash
 bun test                # plumbing + SQLite + gateway + reducer + Jazz projection

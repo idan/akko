@@ -25,6 +25,19 @@ export const appSchema = {
 
 export const app = s.defineApp(appSchema);
 
+/**
+ * Row-level permissions (doc 14). Dev-permissive: anyone may read/insert the projected
+ * messages so a local-first browser client can render without full auth. Real
+ * workspace read-ACL (Workspace -> policy) comes later. The backend writes with a
+ * privileged secret that bypasses policies regardless.
+ */
+export const permissions = s.definePermissions(app, (ctx: any) => {
+  // Access is `ctx.policy.<table>` at runtime (the alpha's factory param type is
+  // out of sync, so `ctx` is typed loosely here).
+  ctx.policy.messages.allowRead.always();
+  ctx.policy.messages.allowInsert.always();
+});
+
 /** Extract renderable text from a pi message's `content` (string or content blocks). */
 export function textOfContent(content: unknown): string {
   if (typeof content === "string") return content;

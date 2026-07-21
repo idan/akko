@@ -75,19 +75,26 @@ table."
 
 ## Status
 
-**Migrated to 2.0-alpha and verified** (behind the existing seams; the WS path is
-unchanged and Jazz is opt-in):
+**Migrated to 2.0-alpha and verified against a standalone server** (behind the existing
+seams; the WS path is unchanged and Jazz is opt-in):
 
-- `@akko/schema` — relational `messages` table + `defineApp`.
-- `@akko/server` `JazzProjector` inserts finalized messages (with `authorId`) via a
-  backend `Db`; `createBackendDb` connects to the sync server; `main.ts` enables it when
-  `JAZZ_SYNC` + `JAZZ_APP_ID` + `JAZZ_BACKEND_SECRET` are set (else off).
+- `@akko/schema` — relational `messages` table + `defineApp` + a dev read/insert
+  **row policy** (`definePermissions`) so a local-first client can read.
+- `@akko/server` — `JazzProjector` inserts finalized messages via a backend `Db`;
+  `createBackendDb` connects to the sync server; `deployAkkoSchema` publishes the
+  schema + policies; `main.ts` deploys on boot and projects when `JAZZ_SYNC` +
+  `JAZZ_APP_ID` + `JAZZ_BACKEND_SECRET` (+ `JAZZ_ADMIN_SECRET`) are set.
 - `@akko/web` — `JazzSvelteProvider` (local-first auth) + a `QuerySubscription`-backed
   message view, gated behind `VITE_JAZZ=1`, toggled against the live WS view.
-- Automated proof: `jazz-projector.test.ts` runs an in-memory local Jazz server, the
-  projector inserts rows, and a query reads them back — in-process on Bun. 50 tests
+- **Standalone-server e2e verified on Bun**: `jazz-tools server` runs; the backend
+  deploys schema + policies to it on boot; a **real agent turn** flows through the full
+  backend and the projector writes the finalized user + assistant messages as rows in
+  the standalone server, where they are queryable. In-process test
+  (`jazz-projector.test.ts`) covers the projector against an in-memory server; 50 tests
   green; `svelte-check` + `vite build` pass (~82 KB gzipped).
 
-Next: run against a standalone `jazz-tools server` end-to-end, add row policies for
-workspace read-ACL, migrate the default frontend read path to Jazz, presence, and JWT
-auth.
+Note: a fresh one-shot query on a cold context returns empty until local-first sync
+completes; the browser reads reactively via `QuerySubscription`, which resolves as data
+syncs. Next: verify the browser read path live, add real workspace read-ACL policies
+(replacing the dev-permissive one), migrate the default frontend read path to Jazz, and
+JWT auth.

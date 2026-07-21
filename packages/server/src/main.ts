@@ -25,7 +25,7 @@ import {
 } from "@akko/runtime";
 import { createGatewayServer } from "./gateway.ts";
 import { JazzProjector } from "./jazz-projector.ts";
-import { createBackendDb, workerConfigFromEnv } from "./jazz-worker.ts";
+import { createBackendDb, deployAkkoSchema, workerConfigFromEnv } from "./jazz-worker.ts";
 
 const port = Number(process.env.AKKO_PORT ?? 8787);
 const dataDir = process.env.AKKO_DATA_DIR ?? join(homedir(), ".akko");
@@ -40,6 +40,14 @@ const eventBus = new InMemoryEventBus();
 const workerConfig = workerConfigFromEnv();
 let projector: JazzProjector | undefined;
 if (workerConfig) {
+  if (workerConfig.adminSecret) {
+    await deployAkkoSchema({
+      serverUrl: workerConfig.serverUrl,
+      appId: workerConfig.appId,
+      adminSecret: workerConfig.adminSecret,
+    });
+    console.log(`  jazz:      deployed schema + policies to ${workerConfig.serverUrl}`);
+  }
   projector = new JazzProjector(createBackendDb(workerConfig));
   console.log(`  jazz:      projecting to ${workerConfig.serverUrl} (app ${workerConfig.appId})`);
 } else {
