@@ -36,18 +36,30 @@ bun run dev:web        # Vite dev server on :5173, proxying /api + /ws to the ga
 # open http://localhost:5173
 ```
 
+Optional — enable the Jazz projection (doc 14):
+
 ```bash
-bun test                # plumbing + SQLite + gateway + reducer + construct-only pi
+bun run dev:sync                          # local Jazz sync server on :4200
+bunx jazz-run account create --name akko-worker   # one-time; prints env vars
+JAZZ_SYNC=ws://localhost:4200 \
+  JAZZ_WORKER_ACCOUNT=... JAZZ_WORKER_SECRET=... \
+  bun run dev:server                      # projector on; sessions get a jazzId
+# in the chat header, toggle "Live" <-> "Jazz"
+```
+
+```bash
+bun test                # plumbing + SQLite + gateway + reducer + Jazz projection
 AKKO_LIVE=1 bun test    # also runs the live prompt + live WS round-trip
 ```
 
 ## Layout
 
 ```
-docs/architecture/   design + decision records (00–13)
+docs/architecture/   design + decision records (00–14)
 packages/core/       domain model + interfaces (@akko/core)
 packages/runtime/    concrete implementations (@akko/runtime)
 packages/protocol/   shared WS/HTTP wire types (@akko/protocol)
-packages/server/     WebSocket + HTTP gateway + dev entry (@akko/server)
+packages/schema/     Jazz CoValue schemas (@akko/schema)
+packages/server/     WebSocket + HTTP gateway + Jazz projector + dev entry (@akko/server)
 packages/web/        Svelte 5 + bits-ui frontend (@akko/web)
 ```

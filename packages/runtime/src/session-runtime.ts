@@ -23,6 +23,7 @@ import type {
   Command,
   CommittedEntry,
   ConversationStore,
+  EntrySink,
   EventBus,
   Mailbox,
   PrincipalId,
@@ -55,6 +56,8 @@ export interface AkkoSessionRuntimeOptions {
   conversationStore: ConversationStore;
   /** Number of messages already persisted (nonzero after rehydration). */
   persistedCount?: number;
+  /** Extra sinks fed each committed entry (e.g. a Jazz projector). */
+  entrySinks?: EntrySink[];
 }
 
 export class AkkoSessionRuntime implements SessionRuntime {
@@ -62,6 +65,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
   readonly #driver: SessionDriver;
   readonly #eventBus: EventBus;
   readonly #store: ConversationStore;
+  readonly #entrySinks: EntrySink[];
   #unsubscribe?: () => void;
   #mailbox!: Mailbox;
 
@@ -75,6 +79,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
     this.#driver = options.driver;
     this.#eventBus = options.eventBus;
     this.#store = options.conversationStore;
+    this.#entrySinks = options.entrySinks ?? [];
     this.#persistedCount = options.persistedCount ?? 0;
     this.#unsubscribe = this.#driver.subscribe((event) => {
       this.#eventBus.publish({ type: "pi", sessionId: this.ref.id, event });
@@ -148,6 +153,13 @@ export class AkkoSessionRuntime implements SessionRuntime {
       };
       await this.#store.persistEntry(this.ref.id, entry);
       this.#eventBus.publish({ type: "entry", sessionId: this.ref.id, entry });
+      for (const sink of this.#entrySinks) {
+        try {
+          await sink.onEntry(this.ref.id, entry);
+        } catch {
+          // A projection failure must not break canonical capture (doc 04).
+        }
+      }
       this.#lastEntryId = id;
     }
     this.#persistedCount = messages.length;

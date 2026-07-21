@@ -140,9 +140,14 @@ session-facing view over `NodeDirectory`.
    pure conversation reducer; responsive/mobile layout. Wire types extracted to
    `@akko/protocol` so the browser build pulls no `bun`/pi runtime. Backlog fetch for
    rehydrated sessions, multi-client attribution rendering, and auth next.
-8. Later: `Projector` (Jazz), container isolation, `MemoryProvider` + `SearchIndex`,
+8. ◑ **Jazz projector** — thin vertical slice done (doc 14): `@akko/schema` CoValue
+   schemas, backend `JazzProjector` + worker, frontend `CoState` read view (toggle),
+   proven by an in-process cross-account test. Next: real sync server, migrate default
+   reads to Jazz, presence, Better Auth.
+9. Later: container isolation, `MemoryProvider` + `SearchIndex`,
    `HostResolver`/`NodeDirectory` + node↔Hub link (distributed execution, doc 12).
 
-> Progress lives in `packages/runtime`, `packages/server`, and `packages/web`, verified
-> with `bun test` (48 tests; live pi prompt + live WS round-trip under `AKKO_LIVE=1`;
-> SQLite FTS5; durable rehydration) plus `svelte-check` + `vite build` for the web app.
+> Progress lives in `packages/{runtime,server,web,schema,protocol}`, verified with
+> `bun test` (50 tests; live pi prompt + live WS round-trip under `AKKO_LIVE=1`; SQLite
+> FTS5; durable rehydration; Jazz projection cross-account read) plus `svelte-check` +
+> `vite build`.

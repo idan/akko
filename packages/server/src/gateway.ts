@@ -64,7 +64,8 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<SocketData>
             ownerId: principal as PrincipalId,
             title: body.title,
           });
-          return json({ ref: runtime.ref });
+          const jazzId = deps.registry.projectionId?.(runtime.ref.id);
+          return json({ ref: { ...runtime.ref, jazzId } });
         }
         if (req.method === "GET") {
           const workspaceId = url.searchParams.get("workspaceId");
@@ -73,7 +74,11 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<SocketData>
             workspaceId as WorkspaceId,
             principal as PrincipalId,
           );
-          return json({ sessions });
+          const withJazz = sessions.map((ref) => ({
+            ...ref,
+            jazzId: deps.registry.projectionId?.(ref.id),
+          }));
+          return json({ sessions: withJazz });
         }
       }
 

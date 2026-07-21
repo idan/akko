@@ -7,3 +7,5 @@
 export * from "./protocol.ts";
 export * from "./connection.ts";
 export * from "./gateway.ts";
+export * from "./jazz-projector.ts";
+export * from "./jazz-worker.ts";

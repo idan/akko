@@ -29,6 +29,7 @@ import {
 import { AkkoMailbox } from "./mailbox.ts";
 import { AkkoSessionRuntime, type SessionDriver } from "./session-runtime.ts";
 import { InMemorySessionIndex, type SessionIndex } from "./session-index.ts";
+import type { SessionProjector } from "./session-projector.ts";
 import { newSessionId } from "./ids.ts";
 
 export interface AkkoSessionRegistryDeps {
@@ -37,6 +38,8 @@ export interface AkkoSessionRegistryDeps {
   eventBus: EventBus;
   sessionIndex?: SessionIndex;
   policy?: AuthorizationPolicy;
+  /** Optional read-model projector (e.g. Jazz). Fed committed entries; owns projection ids. */
+  projector?: SessionProjector;
   /** This node's id, stamped onto `SessionRef.hostNode`. */
   nodeId?: string;
 }
@@ -75,6 +78,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return this.#live.has(sessionId);
   }
 
+  /** External projection id (e.g. Jazz CoValue id) for a session, if a projector is set. */
+  projectionId(sessionId: SessionId): string | undefined {
+    return this.#deps.projector?.projectionId(sessionId);
+  }
+
   async createConversation(input: {
     workspaceId: WorkspaceId;
     ownerId: PrincipalId;
@@ -97,6 +105,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
       updatedAt: now,
     };
     this.#index.upsertRef(ref);
+    this.#deps.projector?.ensureSession(ref);
     return this.#instantiate(ref, session, 0);
   }
 
@@ -138,12 +147,15 @@ export class AkkoSessionRegistry implements SessionRegistry {
   }
 
   #instantiate(ref: SessionRef, session: SessionDriver, persistedCount: number): AkkoSessionRuntime {
+    const projector = this.#deps.projector;
+    if (projector) projector.ensureSession(ref);
     const runtime = new AkkoSessionRuntime({
       ref,
       driver: session,
       eventBus: this.#deps.eventBus,
       conversationStore: this.#deps.conversationStore,
       persistedCount,
+      entrySinks: projector ? [projector] : [],
     });
     const mailbox = new AkkoMailbox({
       authorize: (command) => this.#authorize(ref, command),

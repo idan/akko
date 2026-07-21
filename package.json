@@ -10,7 +10,8 @@
   "scripts": {
     "typecheck": "tsc -p packages/core/tsconfig.json",
     "dev:server": "bun run packages/server/src/main.ts",
-    "dev:web": "bun run --filter '@akko/web' dev"
+    "dev:web": "bun run --filter '@akko/web' dev",
+    "dev:sync": "bunx jazz-run sync --port 4200"
   },
   "devDependencies": {
     "@types/bun": "latest",

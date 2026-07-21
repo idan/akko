@@ -13,7 +13,9 @@
     "@akko/core": "workspace:*",
     "@akko/protocol": "workspace:*",
     "@internationalized/date": "^3.8.1",
-    "bits-ui": "^2.18.1"
+    "bits-ui": "^2.18.1",
+    "@akko/schema": "workspace:*",
+    "jazz-tools": "^0.20.19"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.2.0",

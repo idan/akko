@@ -18,6 +18,8 @@ export interface GatewaySessions {
     title?: string;
   }): Promise<{ ref: SessionRef; mailbox: Mailbox }>;
   list(workspaceId: WorkspaceId, principalId: PrincipalId): Promise<SessionRef[]>;
+  /** Optional external projection id (e.g. Jazz CoValue id) for a session (doc 14). */
+  projectionId?(sessionId: SessionId): string | undefined;
 }
 
 export interface GatewayConnectionDeps {

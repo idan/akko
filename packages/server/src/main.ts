@@ -24,6 +24,8 @@ import {
   SqliteSessionIndex,
 } from "@akko/runtime";
 import { createGatewayServer } from "./gateway.ts";
+import { JazzProjector } from "./jazz-projector.ts";
+import { startAkkoWorker, workerConfigFromEnv } from "./jazz-worker.ts";
 
 const port = Number(process.env.AKKO_PORT ?? 8787);
 const dataDir = process.env.AKKO_DATA_DIR ?? join(homedir(), ".akko");
@@ -33,11 +35,24 @@ mkdirSync(storageRoot, { recursive: true });
 
 const db = new BunSqliteAdapter(join(dataDir, "akko.db"));
 const eventBus = new InMemoryEventBus();
+
+// Optional Jazz projection (doc 14): enabled when JAZZ_SYNC + worker creds are set.
+const workerConfig = workerConfigFromEnv();
+let projector: JazzProjector | undefined;
+if (workerConfig) {
+  await startAkkoWorker(workerConfig);
+  projector = new JazzProjector({ publicRead: true });
+  console.log(`  jazz:      projecting to ${workerConfig.syncServer}`);
+} else {
+  console.log("  jazz:      disabled (set JAZZ_SYNC + JAZZ_WORKER_ACCOUNT + JAZZ_WORKER_SECRET)");
+}
+
 const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
   conversationStore: new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") }),
   sessionIndex: new SqliteSessionIndex(db),
   eventBus,
+  projector,
 });
 
 const workspace: Workspace = {

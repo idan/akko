@@ -5,7 +5,7 @@
  * commands out and events in. Reactive `$state` fields drive the UI. Uses same-origin
  * `/api` and `/ws` (Vite proxies them to the gateway in dev).
  */
-import type { ClientMessage, ServerMessage, SessionRef } from "@akko/protocol";
+import type { ClientMessage, ServerMessage, SessionSummary } from "@akko/protocol";
 import { applyEvent, emptyConversation, type ConversationState, type WireEvent } from "./conversation.ts";
 
 export class AkkoClient {
@@ -14,9 +14,11 @@ export class AkkoClient {
 
   connected = $state(false);
   error = $state<string | null>(null);
-  sessions = $state<SessionRef[]>([]);
+  sessions = $state<SessionSummary[]>([]);
   activeSessionId = $state<string | null>(null);
   conversations = $state<Record<string, ConversationState>>({});
+  /** Jazz projection CoValue id per session (doc 14), when the backend projector is on. */
+  jazzIds = $state<Record<string, string>>({});
 
   #ws?: WebSocket;
   #subscribed = new Set<string>();
@@ -30,6 +32,17 @@ export class AkkoClient {
   get activeConversation(): ConversationState {
     const id = this.activeSessionId;
     return (id && this.conversations[id]) || emptyConversation();
+  }
+
+  get activeJazzId(): string | undefined {
+    const id = this.activeSessionId;
+    return id ? this.jazzIds[id] : undefined;
+  }
+
+  #rememberJazz(refs: SessionSummary[]): void {
+    const next = { ...this.jazzIds };
+    for (const r of refs) if (r.jazzId) next[r.id] = r.jazzId;
+    this.jazzIds = next;
   }
 
   connect(): void {
@@ -75,8 +88,9 @@ export class AkkoClient {
     const res = await fetch(`/api/sessions?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
       headers: { "x-akko-principal": this.principalId },
     });
-    const data = (await res.json()) as { sessions: SessionRef[] };
+    const data = (await res.json()) as { sessions: SessionSummary[] };
     this.sessions = data.sessions;
+    this.#rememberJazz(data.sessions);
   }
 
   async createSession(title?: string): Promise<void> {
@@ -85,8 +99,9 @@ export class AkkoClient {
       headers: { "content-type": "application/json", "x-akko-principal": this.principalId },
       body: JSON.stringify({ workspaceId: this.workspaceId, title: title ?? `Session ${this.sessions.length + 1}` }),
     });
-    const data = (await res.json()) as { ref: SessionRef };
+    const data = (await res.json()) as { ref: SessionSummary };
     this.sessions = [data.ref, ...this.sessions];
+    this.#rememberJazz([data.ref]);
     this.select(data.ref.id);
   }
 

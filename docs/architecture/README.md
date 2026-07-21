@@ -26,6 +26,8 @@ scoping the system. They are meant to be read in order, but each stands alone.
 | [10 — Core Interfaces](./10-core-interfaces.md) | Overview of the `packages/core` TypeScript interfaces |
 | [11 — Runtime Evaluation](./11-runtime-evaluation.md) | Bun vs. Deno, empirically tested against pi; why Bun is the default |
 | [12 — Distributed Execution](./12-distributed-execution.md) | Remote daemons as execution points; Hub/SessionHost split; node↔Hub protocol; replication |
+| [13 — Database Choice](./13-database-choice.md) | SQLite now; not the Turso engine; SearchIndex seam for future vector retrieval |
+| [14 — Jazz Evaluation](./14-jazz-evaluation.md) | Bun-compat proven; Jazz as read/state projection (not source of truth); incremental adoption |
 
 ## The one-paragraph summary
 

@@ -36,14 +36,17 @@ export type ServerMessage =
   | { t: "ack"; cid?: string; sessionId: string; result: MailboxResult }
   | { t: "error"; cid?: string; message: string };
 
+/** A session plus its optional Jazz projection id (doc 14). */
+export type SessionSummary = SessionRef & { jazzId?: string };
+
 /** HTTP: create-conversation request/response bodies. */
 export interface CreateSessionRequest {
   workspaceId: string;
   title?: string;
 }
 export interface CreateSessionResponse {
-  ref: SessionRef;
+  ref: SessionSummary;
 }
 export interface ListSessionsResponse {
-  sessions: SessionRef[];
+  sessions: SessionSummary[];
 }
