@@ -5,8 +5,11 @@ skeleton in [`packages/core/src`](../../packages/core/src). These are **interfac
 and types only** — the compilable shape of the system. Each file carries detailed
 JSDoc; this is the overview and the "why each exists" summary.
 
-> Status: design skeleton. No behavior is implemented. pi packages are declared as
-> optional peer dependencies so the types resolve when installed.
+> Status: `@akko/core` is **interfaces and types only** (the compilable shape). The
+> concrete implementations live in `@akko/runtime`, `@akko/server`, `@akko/schema`, and
+> `@akko/web` and are implemented + tested. pi packages are declared as optional peer
+> dependencies so the core types resolve when installed. For current progress and the
+> prioritized roadmap, see [15 — Status and Roadmap](./15-status-and-roadmap.md).
 
 ## Dependency flow
 

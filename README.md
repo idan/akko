@@ -8,7 +8,8 @@ An opinionated, minimalistic personal agentic system built on top of the
   Deno is a verified fallback; the only runtime-coupled seam is the SQLite driver
   behind `ConversationStore` (`packages/core/src/sqlite.ts`).
 - **Design docs:** [`docs/architecture/`](docs/architecture/README.md) — read the
-  index first.
+  index first. **Resuming work?** Start at
+  [15 — Status and Roadmap](docs/architecture/15-status-and-roadmap.md).
 - **Core interfaces (design skeleton):** [`packages/core/src`](packages/core/src),
   documented in [`docs/architecture/10-core-interfaces.md`](docs/architecture/10-core-interfaces.md).
 
