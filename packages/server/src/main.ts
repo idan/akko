@@ -77,16 +77,24 @@ console.log(`  auth:      Better Auth ready (passkeys) at ${webOrigin}/api/auth`
 const workerConfig = workerConfigFromEnv();
 let projector: JazzProjector | undefined;
 if (workerConfig) {
-  if (workerConfig.adminSecret) {
-    await deployAkkoSchema({
-      serverUrl: workerConfig.serverUrl,
-      appId: workerConfig.appId,
-      adminSecret: workerConfig.adminSecret,
-    });
-    console.log(`  jazz:      deployed schema + policies to ${workerConfig.serverUrl}`);
+  // Jazz is an opt-in read-model projection — never let its setup (schema deploy /
+  // backend connect) block or crash the gateway. If the sync server is down or slow,
+  // continue without projection; the core app is unaffected.
+  try {
+    if (workerConfig.adminSecret) {
+      await deployAkkoSchema({
+        serverUrl: workerConfig.serverUrl,
+        appId: workerConfig.appId,
+        adminSecret: workerConfig.adminSecret,
+      });
+      console.log(`  jazz:      deployed schema + policies to ${workerConfig.serverUrl}`);
+    }
+    projector = new JazzProjector(createBackendDb(workerConfig));
+    console.log(`  jazz:      projecting to ${workerConfig.serverUrl} (app ${workerConfig.appId})`);
+  } catch (err) {
+    projector = undefined;
+    console.warn(`  jazz:      setup failed; continuing without projection: ${err instanceof Error ? err.message : String(err)}`);
   }
-  projector = new JazzProjector(createBackendDb(workerConfig));
-  console.log(`  jazz:      projecting to ${workerConfig.serverUrl} (app ${workerConfig.appId})`);
 } else {
   console.log("  jazz:      disabled (set JAZZ_SYNC + JAZZ_APP_ID + JAZZ_BACKEND_SECRET)");
 }

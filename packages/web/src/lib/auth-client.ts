@@ -21,9 +21,12 @@ export interface AuthedUser {
   email: string;
 }
 
-/** Current session's user, or `null` when signed out. */
+/** Current session's user, or `null` when signed out. Throws if the backend is unreachable. */
 export async function currentUser(): Promise<AuthedUser | null> {
   const res = await authClient.getSession();
+  // Distinguish "signed out" (data null, no error) from "backend unreachable" (error set,
+  // e.g. the gateway is still booting under dev:jazz) so the caller can retry the latter.
+  if (res.error) throw new Error(res.error.message ?? "session check failed");
   const user = res.data?.user;
   return user ? { id: user.id, name: user.name, email: user.email } : null;
 }

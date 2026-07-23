@@ -42,7 +42,17 @@
   });
 
   async function refreshSession() {
-    user = await currentUser();
+    let resolved: AuthedUser | null;
+    try {
+      resolved = await currentUser();
+    } catch (err) {
+      // Backend not reachable yet (e.g. the gateway is still booting behind the Jazz
+      // sync server under dev:jazz). Stay on "Loading…" and retry until it answers.
+      console.warn("backend unreachable, retrying session check…", err);
+      setTimeout(() => void refreshSession(), 1500);
+      return;
+    }
+    user = resolved;
     if (user && !client) {
       const c = new AkkoClient({ principalId: user.id, workspaceId: WORKSPACE });
       c.connect();
