@@ -58,6 +58,8 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
     expect(rows.map((m) => `${m.role}:${m.text}`)).toEqual(["user:my name is Ada", "assistant:Hi Ada"]);
     expect(rows[0]?.authorId).toBe("prn_alice");
     expect(rows[1]?.authorId).toBe("");
+    // Read-ACL key: every projected row carries the session's workspace (doc 16).
+    expect(rows.every((m) => m.workspaceId === "wsp_1")).toBe(true);
   });
 
   test("ignores non-conversation entries; rows are isolated per session", async () => {

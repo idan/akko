@@ -5,8 +5,9 @@
  * content lives in SQLite (doc 04). Live token streaming stays on the WS.
  *
  * Constructed with a backend `Db` (from `createBackendDb`, connected to the sync
- * server). Row-level read policies would gate client access in a full build; the dev
- * slice relies on local-first client auth.
+ * server). Reads are gated by the `messages` row policy (doc 16): a client may read only
+ * rows whose `workspaceId` matches its verified JWT claim. The backend writes with a
+ * privileged secret that bypasses policies.
  */
 import type { Db } from "jazz-tools/backend";
 import { app, textOfContent } from "@akko/schema";
@@ -16,6 +17,7 @@ import type { SessionProjector } from "@akko/runtime";
 export class JazzProjector implements SessionProjector {
   readonly #db: Db;
   #projected = new Set<SessionId>();
+  #workspaceOf = new Map<SessionId, string>();
 
   constructor(db: Db) {
     this.#db = db;
@@ -24,6 +26,7 @@ export class JazzProjector implements SessionProjector {
   /** Mark a session projected. In the relational model the key is the sessionId itself. */
   ensureSession(ref: SessionRef): string {
     this.#projected.add(ref.id);
+    this.#workspaceOf.set(ref.id, ref.workspaceId);
     return ref.id;
   }
 
@@ -37,6 +40,7 @@ export class JazzProjector implements SessionProjector {
 
     this.#db.insert(app.messages, {
       sessionId,
+      workspaceId: this.#workspaceOf.get(sessionId) ?? "",
       role: message.role,
       text: textOfContent(message.content),
       createdAt: new Date(entry.ts),
@@ -50,5 +54,6 @@ export class JazzProjector implements SessionProjector {
 
   async drop(sessionId: SessionId): Promise<void> {
     this.#projected.delete(sessionId);
+    this.#workspaceOf.delete(sessionId);
   }
 }

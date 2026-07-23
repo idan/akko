@@ -21,6 +21,7 @@ import { setSessionCookie } from "better-auth/cookies";
 import { getSessionFromCtx } from "better-auth/api";
 import type { PrincipalId } from "@akko/core";
 import { newPrincipalId } from "@akko/runtime";
+import type { MembershipStore } from "@akko/runtime";
 
 export interface AkkoAuthDeps {
   /** A `bun:sqlite` Database handle (Better Auth manages its own tables on it). */
@@ -39,6 +40,8 @@ export interface AkkoAuthDeps {
   trustedOrigins: string[];
   /** Called after a new user row is created — used to grant a default workspace membership. */
   onUserCreated: (user: { id: PrincipalId; name: string; email: string }) => void;
+  /** Source of principal→workspace roles — read to stamp the JWT's `workspaceId` claim (doc 16). */
+  memberships: MembershipStore;
 }
 
 export interface AuthenticatedPrincipal {
@@ -132,7 +135,17 @@ export function createAkkoAuth(deps: AkkoAuthDeps): AkkoAuth {
           },
         },
       }),
-      jwt(),
+      jwt({
+        jwt: {
+          // Stamp the reader's workspace onto the JWT so the Jazz read-ACL can filter
+          // projected rows by verified claim (doc 16/14). Single-workspace v1: the first
+          // membership. The Jazz sync server verifies this JWT via Better Auth's JWKS.
+          definePayload: ({ user }: { user: { id: string } }) => {
+            const ms = deps.memberships.listForPrincipal(user.id as PrincipalId);
+            return { workspaceId: ms[0]?.workspaceId ?? "" };
+          },
+        },
+      }),
     ],
   });
 

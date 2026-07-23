@@ -76,12 +76,35 @@ at the gateway and return `401` (unauthenticated) / `403` (not a member).
 
 ## What is deferred (designed, not built)
 
-- **Jazz read-ACL via JWT.** When Jazz becomes the default *permissioned* read path, the
-  browser will carry a Better Auth JWT (jwt plugin → JWKS), Jazz's backend
-  `forRequest()` will verify it (`jwksUrl` / `allowLocalFirstAuth: false`), and
-  `definePermissions` will filter projected `messages` rows by a workspace-membership
-  claim (doc 14). None of this touches the command/write path, so it is a clean later
-  switch. Today Jazz stays the opt-in dev inspector with a permissive policy.
+## Jazz read-ACL (implemented)
+
+The Jazz read model now enforces the same workspace boundary as the command path, keyed
+on a verified JWT claim (doc 14):
+
+```
+Better Auth jwt plugin  ──JWT { sub, workspaceId }──▶  browser
+   (definePayload adds the reader's workspaceId claim)         │ jwtToken
+                                                               ▼
+   Jazz sync server  ──verifies JWT via Better Auth's JWKS (--jwks-url)──▶ Session { claims }
+                                                               │
+   messages row policy: allowRead.where({ workspaceId: session.workspaceId })
+```
+
+- **Claim**: the jwt plugin's `definePayload` stamps `workspaceId` (the reader's first
+  membership) onto every JWT. Single-workspace v1; a multi-workspace claim (list + IN
+  match) is the extension.
+- **Verification**: the standalone `jazz-tools server` runs with
+  `--jwks-url http://localhost:8787/api/auth/jwks` and **without**
+  `--allow-local-first-auth`, so it verifies Better Auth's EdDSA JWTs and rejects the
+  anonymous keypair path. The projected `messages` table carries a `workspaceId` column;
+  the row policy (`definePermissions`) allows a read only when it matches the JWT claim,
+  and `allowInsert.never()` keeps clients read-only (the backend projector writes with a
+  privileged secret that bypasses policies).
+- **Frontend**: the browser fetches a JWT from `/api/auth/token` and passes it as
+  `createJazzClient({ jwtToken })` (replacing the anonymous `LocalFirstAuth` secret).
+
+## What is deferred (designed, not built)
+
 - **Account recovery.** Passkey-only means losing every authenticator = lockout. Fine for
   an early personal system (re-seed from the backend); a recovery path (a second factor
   or admin re-issue) is a conscious follow-up.
@@ -108,12 +131,19 @@ Things that work but are worth revisiting:
 - **Two SQLite handles on one file.** Better Auth opens its own `bun:sqlite` handle on the
   same `akko.db` (WAL) as the runtime adapter. Fine in one process; if the auth surface
   ever moves out-of-process, revisit.
-- **Test gaps.** The membership store and role policy have unit tests, and the gateway
-  HTTP/WS paths use a test auth stub; there is no committed test for the `/api/models`
-  route, the 403 (non-member) branches, or a real Better Auth session round-trip (the
-  passkey ceremony needs a browser). A gated integration test could cover the last one.
-- **The Jazz frontend still uses `LocalFirstAuth`** (anonymous keypair), unchanged by this
-  work. Wiring it to the Better Auth JWT is part of the deferred read-ACL path above.
+- **Test gaps.** The membership store and role policy have unit tests, the gateway
+  HTTP/WS paths use a test auth stub, and the Jazz projector round-trips a workspace-
+  stamped row; there is no committed test for the `/api/models` route, the 403 (non-
+  member) branches, or a real Better Auth session round-trip (the passkey ceremony needs
+  a browser).
+- **Jazz read-ACL needs live verification.** The claim + policy + `--jwks-url` wiring
+  typechecks and the schema/policy compile, but the full path (browser presents JWT →
+  sync server verifies via JWKS → row policy filters) needs the 3-process stack
+  (`bun run dev:jazz`) plus a browser passkey to confirm end-to-end. Two things to watch
+  at runtime: the JWT **audience** (Jazz may require a specific `aud`; tune Better Auth's
+  jwt `audience` if verification rejects), and **token refresh** — JWTs expire, and the
+  client currently fetches one at startup; `JazzClient.updateAuthToken(...)` is the seam
+  for refresh-on-expiry.
 
 ## Where it lives
 
@@ -126,3 +156,8 @@ Things that work but are worth revisiting:
 | `RoleBasedPolicy` (+ `AllowAllPolicy`) | `packages/core/src/authz.ts` |
 | Role threaded into the authz context | `packages/runtime/src/session-registry.ts` |
 | Auth client + login/signup UI | `packages/web/src/lib/auth-client.ts`, `packages/web/src/lib/components/Auth.svelte` |
+| Jazz read-ACL: `workspaceId` column + claim-based row policy | `packages/schema/src/index.ts` |
+| JWT `workspaceId` claim (`definePayload`) | `packages/server/src/auth.ts` |
+| Projector stamps `workspaceId` onto rows | `packages/server/src/jazz-projector.ts` |
+| Frontend Jazz client uses the Better Auth JWT | `packages/web/src/App.svelte`, `packages/web/src/lib/auth-client.ts` |
+| Sync server verifies JWTs (`--jwks-url`, no local-first) | `package.json` `dev:sync` |

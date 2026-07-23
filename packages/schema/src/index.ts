@@ -15,6 +15,8 @@ import { schema as s } from "jazz-tools";
 export const appSchema = {
   messages: s.table({
     sessionId: s.string(),
+    /** Workspace that owns the session — the read-ACL key (doc 16). */
+    workspaceId: s.string(),
     role: s.string(),
     text: s.string(),
     createdAt: s.timestamp(),
@@ -26,16 +28,21 @@ export const appSchema = {
 export const app = s.defineApp(appSchema);
 
 /**
- * Row-level permissions (doc 14). Dev-permissive: anyone may read/insert the projected
- * messages so a local-first browser client can render without full auth. Real
- * workspace read-ACL (Workspace -> policy) comes later. The backend writes with a
- * privileged secret that bypasses policies regardless.
+ * Row-level permissions (doc 14/16). A projected message is readable **iff its
+ * `workspaceId` matches the reader's `workspaceId` JWT claim** — Better Auth issues the
+ * JWT (jwt plugin, JWKS), the Jazz sync server verifies it (`--jwks-url`), and this
+ * policy filters rows by the verified claim. Clients never insert: the backend projector
+ * writes with a privileged secret (`asBackend`) that bypasses policies. Anonymous
+ * local-first auth is rejected at the server (drop `--allow-local-first-auth`).
+ *
+ * Single-workspace v1: each principal carries one `workspaceId` claim. Multi-workspace
+ * membership (claim as a list + an IN match) is a later extension.
  */
 export const permissions = s.definePermissions(app, (ctx: any) => {
-  // Access is `ctx.policy.<table>` at runtime (the alpha's factory param type is
-  // out of sync, so `ctx` is typed loosely here).
-  ctx.policy.messages.allowRead.always();
-  ctx.policy.messages.allowInsert.always();
+  // Access is `ctx.policy.<table>` / `ctx.session.<claim>` at runtime (the alpha's
+  // factory param type is out of sync, so `ctx` is typed loosely here).
+  ctx.policy.messages.allowRead.where({ workspaceId: ctx.session.workspaceId });
+  ctx.policy.messages.allowInsert.never();
 });
 
 /** Extract renderable text from a pi message's `content` (string or content blocks). */

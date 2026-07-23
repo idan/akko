@@ -125,8 +125,10 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    rows, so an in-flight turn gives no feedback (no optimistic user message, no spinner,
    no token stream) until both messages pop in at turn end. Auto-scroll is now fixed;
    the live-feedback gap is addressed by item 4.
-2. Replace the **dev-permissive row policy** with real **workspace read-ACL**
-   (`definePermissions` mapping Workspace→policy, doc 02/14).
+2. ~~Replace the **dev-permissive row policy** with real **workspace read-ACL**~~ —
+   **done** (doc 16): the `messages` table carries `workspaceId`, the row policy filters
+   reads by the JWT's `workspaceId` claim, and the sync server verifies Better Auth JWTs
+   via `--jwks-url` (no `--allow-local-first-auth`). Needs live end-to-end verification.
 3. A gated **standalone-server integration test** (server + backend + projector).
 
 **B. Make rehydrated sessions render history**
@@ -157,7 +159,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    the session cookie on HTTP **and** at WS upgrade to derive `principalId` (retiring the
    trusted `?principal=` / `x-akko-principal`); `MembershipStore` + `RoleBasedPolicy`
    replace `AllowAllPolicy`. Passkey-only signup collects full name + email then mints the
-   first passkey. *Deferred:* Jazz read-ACL via JWT/JWKS (`forRequest`), per-user
+   first passkey. *Deferred:* per-user
    workspaces, account recovery.
 9. **Multiplayer rendering** — attribution per message, presence, mailbox/queue feedback.
 
@@ -183,6 +185,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 - The **write tool used during development** intermittently appends stray
   `</content>`/`</invoke>` tags to files; strip + re-verify after batch writes.
 - **Auth loose ends** (doc 16): the gateway has no CORS
-  (dev is same-origin); no committed test yet for `/api/models`, the 403 non-member
-  branches, or a live passkey round-trip; the Jazz view still uses anonymous
-  `LocalFirstAuth`, not the Better Auth JWT.
+  (dev is same-origin); no committed test yet for `/api/models` or the 403 non-member
+  branches; the Jazz read-ACL (JWT claim + `--jwks-url` verification) typechecks and
+  compiles but needs live end-to-end verification (3-process stack + browser passkey),
+  plus JWT token refresh-on-expiry.

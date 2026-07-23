@@ -66,6 +66,7 @@ const { handler, getPrincipal, options } = createAkkoAuth({
     memberships.grant({ workspaceId, principalId: user.id, role: "owner" });
     console.log(`  auth:      registered ${user.email} (${user.id}) → owner of ${workspaceId}`);
   },
+  memberships,
 });
 // Create Better Auth's tables on first boot (idempotent).
 const { runMigrations } = await getMigrations(options);

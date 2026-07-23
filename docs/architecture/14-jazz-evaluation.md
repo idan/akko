@@ -45,7 +45,7 @@ frontend ◀──── reactive query (QuerySubscription) ──── Jazz `m
 |--------------|------------------|
 | Projected conversation (read model) | rows in a `messages` **table**, keyed by `sessionId` |
 | `Principal` attribution | a `authorId` column |
-| Workspace read-ACL (future) | row-level **policies** |
+| Workspace read-ACL | row-level **policy**: `allowRead.where({ workspaceId: session.workspaceId })` (doc 16) |
 | Canonical conversation (source of truth) | **stays in SQLite** (doc 04) |
 | Live token stream | stays on the **WS** (only finalized messages are projected) |
 | Deferred auth | JWT / `LocalFirstAuth` |
@@ -95,6 +95,8 @@ seams; the WS path is unchanged and Jazz is opt-in):
 
 Note: a fresh one-shot query on a cold context returns empty until local-first sync
 completes; the browser reads reactively via `QuerySubscription`, which resolves as data
-syncs. Next: verify the browser read path live, add real workspace read-ACL policies
-(replacing the dev-permissive one), migrate the default frontend read path to Jazz, and
-JWT auth.
+syncs. **Workspace read-ACL is now wired** (doc 16): the `messages` table carries a
+`workspaceId`, the row policy filters reads by the JWT's `workspaceId` claim (Better Auth
+jwt plugin), and the sync server verifies those JWTs via `--jwks-url` (no local-first).
+Next: live end-to-end verification of the JWT read path, migrate the default frontend read
+path to Jazz, and token refresh-on-expiry.

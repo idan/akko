@@ -49,3 +49,15 @@ export async function signInWithPasskey(): Promise<void> {
 export async function signOut(): Promise<void> {
   await authClient.signOut();
 }
+
+/**
+ * Fetch a Better Auth JWT (jwt plugin `/token`) for the Jazz read model (doc 16). The
+ * token carries the user's `workspaceId` claim; the Jazz sync server verifies it via
+ * Better Auth's JWKS and the row policy filters projected messages by workspace.
+ */
+export async function getJazzToken(): Promise<string | null> {
+  const res = await fetch("/api/auth/token", { credentials: "include" });
+  if (!res.ok) return null;
+  const data = (await res.json()) as { token?: string };
+  return data.token ?? null;
+}

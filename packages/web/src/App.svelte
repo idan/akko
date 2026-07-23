@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { LocalFirstAuth, createJazzClient, JazzSvelteProvider, type JazzClient } from "jazz-tools/svelte";
+  import { createJazzClient, JazzSvelteProvider, type JazzClient } from "jazz-tools/svelte";
   import { AkkoClient } from "./lib/client.svelte.ts";
   import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC } from "./lib/config.ts";
-  import { currentUser, signOut, type AuthedUser } from "./lib/auth-client.ts";
+  import { currentUser, signOut, getJazzToken, type AuthedUser } from "./lib/auth-client.ts";
   import SessionList from "./lib/components/SessionList.svelte";
   import ChatView from "./lib/components/ChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
@@ -17,12 +17,16 @@
   let client = $state<AkkoClient | null>(null);
   let sidebarOpen = $state(true);
 
-  // Jazz 2.0 client (opt-in): local-first auth, connected to the sync server (doc 14).
-  const auth = JAZZ_ENABLED ? new LocalFirstAuth() : null;
+  // Jazz 2.0 client (opt-in): connects to the sync server authenticated with the Better
+  // Auth JWT, so the read-ACL row policy filters projected messages by workspace (doc 16).
   let jazzClient = $state<Promise<JazzClient> | null>(null);
   $effect(() => {
-    if (JAZZ_ENABLED && auth?.secret && !jazzClient) {
-      jazzClient = createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, secret: auth.secret });
+    if (JAZZ_ENABLED && user && !jazzClient) {
+      jazzClient = (async () => {
+        const jwtToken = await getJazzToken();
+        if (!jwtToken) throw new Error("no Jazz token (not authenticated?)");
+        return createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
+      })();
     }
   });
 
