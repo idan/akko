@@ -38,21 +38,37 @@ Jazz server as queryable rows** (doc 14).
 
 ## Tests
 
-- **Runner: `bun test` (Bun's built-in, `import ... from "bun:test"`), not vitest.**
-  This is deliberate for the backend (native, fast, matches the Bun runtime decision,
-  doc 11).
-- **Covered:** mailbox (ordering/authz/attribution), event bus, session-runtime entry
-  capture, registry rehydration (durable/liveness split), SQLite adapter (incl. FTS5),
-  SQLite conversation store durability, session index, gateway connection + real WS/HTTP,
-  Jazz projector (in-memory server round-trip), the frontend conversation reducer, and
-  pi integration (construct-only always; live prompt + live WS round-trip under
-  `AKKO_LIVE=1`). 50 tests.
+- **Two runners, by design:**
+  - **Backend + pure logic: `bun test`** (Bun's built-in, `import ... from "bun:test"`).
+    Native, fast, matches the Bun runtime decision (doc 11). Covers every backend package
+    and the pure frontend conversation reducer.
+  - **Frontend components + runes store: `vitest`** in `@akko/web`, split into two
+    projects (`packages/web/vitest.config.ts`):
+    - **`unit`** — jsdom + `@testing-library/svelte`, for components and the runes store.
+    - **`storybook`** — real-browser tests via `@storybook/addon-vitest` (Playwright /
+      chromium): every story's `play` function runs as a test.
+  - **The two never collide:** `bun test` matches `*.test.ts` (including `*.svelte.test.ts`)
+    but *ignores* `*.vitest.ts`. Web unit tests use the **`.vitest.ts`** suffix; story tests
+    live in `*.stories.svelte`. So a plain root `bun test` runs only backend + reducer.
+    Verified empirically.
+- **Covered (bun test, 50 tests):** mailbox (ordering/authz/attribution), event bus,
+  session-runtime entry capture, registry rehydration (durable/liveness split), SQLite
+  adapter (incl. FTS5), SQLite conversation store durability, session index, gateway
+  connection + real WS/HTTP, Jazz projector (in-memory server round-trip), the frontend
+  conversation reducer, and pi integration (construct-only always; live prompt + live WS
+  round-trip under `AKKO_LIVE=1`).
+- **Covered (vitest `unit`, 24 tests):** `MessageList`, `Composer`, `SessionList`,
+  `ChatView` (title/messages/placeholder/menu/error + composer→`sendPrompt`),
+  `JazzMessageList` (projected rows + empty, Jazz deps mocked), and the `AkkoClient`
+  runes store (`loadSessions`/`createSession`/welcome-resubscribe/event-fold/`sendPrompt`/
+  error) with mocked `fetch` + `WebSocket`.
+- **Covered (vitest `storybook`, 11 browser tests):** every story renders + its `play`
+  runs — `Composer`, `MessageList`, `SessionList`, `ChatView` (types + sends, error alert),
+  `JazzMessageList` (projected + empty). Jazz is mocked via Vite aliases in
+  `.storybook/main.ts` (`.storybook/mocks/`), so no live runtime/wasm is needed.
+- **Storybook** (v10, `@storybook/svelte-vite`) for designing components in isolation.
+  Stories (`*.stories.svelte`, native Svelte CSF) exist for all five components.
 - **Gaps worth filling:**
-  - **Frontend components + the `client.svelte.ts` runes store have no tests** — only
-    the pure reducer is tested. This is the clearest gap. Recommendation: add **vitest +
-    `@testing-library/svelte`** for the web package specifically (the Svelte ecosystem
-    standardizes on vitest; `bun:test` can't render components). Keep `bun:test` for the
-    backend packages.
   - `jazz-worker.ts` and `main.ts` are covered only by manual/e2e probes, not committed
     tests (they need a running server + model). A gated integration test could cover the
     standalone-server path.
@@ -70,10 +86,14 @@ JAZZ_SYNC=http://localhost:4200 JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf
   JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin bun run dev:server
 VITE_JAZZ=1 bun run dev:web
 
-bun test                # all packages
+bun test                # backend + reducer (bun:test); ignores *.vitest.ts
 AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 # per-package typecheck: ./node_modules/.bin/tsc --noEmit -p packages/<pkg>/tsconfig.json
 # frontend: cd packages/web && bun run check   (svelte-check) ; bun run build (vite)
+#   web unit tests (vitest + jsdom):        bun --filter '@akko/web' test
+#   story tests as browser tests (Playwright): bun --filter '@akko/web' test:storybook
+#     (one-time: cd packages/web && bunx playwright install chromium)
+#   design components in isolation (Storybook 10): bun --filter '@akko/web' storybook
 ```
 
 ## Decisions & where they live (accumulated knowledge)
@@ -99,20 +119,34 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 ## Next steps (prioritized)
 
 **A. Close out the Jazz slice**
-1. Verify the **browser read path live** (LocalFirstAuth + `QuerySubscription` against
-   the standalone server) — the one piece not verifiable from Bun probes (doc 14).
+1. ~~Verify the **browser read path live**~~ — **verified** (browser LocalFirstAuth +
+   `QuerySubscription` renders projected rows; Live↔Jazz toggle works; Jazz view also
+   shows history after reload). Remaining Jazz-view UX gap: it renders only *finalized*
+   rows, so an in-flight turn gives no feedback (no optimistic user message, no spinner,
+   no token stream) until both messages pop in at turn end. Auto-scroll is now fixed;
+   the live-feedback gap is addressed by item 4.
 2. Replace the **dev-permissive row policy** with real **workspace read-ACL**
    (`definePermissions` mapping Workspace→policy, doc 02/14).
 3. A gated **standalone-server integration test** (server + backend + projector).
 
 **B. Make rehydrated sessions render history**
-4. **Backlog/history fetch** — the WS view renders live events only; a rehydrated
-   session shows no past messages. Either add a `get_entries`-style endpoint + seed the
-   reducer, or make Jazz the default read path (it already holds finalized messages).
+4. ~~**Unify the read path**~~ — **done**. Canonical history now comes from SQLite via
+   `GET /api/sessions/:id/history` (a cheap read, no model rehydration); the client seeds
+   the reducer on select (once per session, never clobbering a live turn), and live
+   streaming continues over the WS. Works in the default no-Jazz setup, so the Live view
+   shows history after reload **and** an in-flight turn shows an optimistic "thinking"
+   indicator that is **consistent across all subscribed tabs** (raised by the user message
+   on the shared event stream, not just the optimistic sender). Jazz remains an optional read-model inspector. *Deferred:* multiplayer
+   attribution rendering (the endpoint already returns `authorId`), and merging live
+   streaming *into* the Jazz view (Jazz still shows finalized rows only).
 
 **C. Core features not yet built**
-5. **`ModelRouter`** (doc 05): string resolver first, then the task classifier. Today
-   every session uses the pi default (`anthropic/claude-opus-4-8`).
+5. **`ModelRouter`** (doc 05): ~~string resolver first~~ **slice 1 done** — `AkkoModelRouter`
+   (`resolveModelString` delegating to pi's matcher + `catalog`), `GET /api/models`, a
+   per-session model persisted on `SessionRef.model` (create with `model`, live change via
+   the `setModel` command, re-applied on rehydration, broadcast cross-tab via a `session`
+   patch), and a header model picker. **Next (slice 2):** the task classifier
+   (`routeTask`, currently throws) — cheap Haiku-class call that picks a model per task.
 6. **Subagents** (doc 03): `spawnSubagent` is a stub; implement as first-class registry
    sessions (in-process), reuse the agent-`.md` pattern.
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
@@ -123,7 +157,10 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 9. **Multiplayer rendering** — attribution per message, presence, mailbox/queue feedback.
 
 **E. Testing/infra**
-10. **Frontend tests** via vitest + testing-library (see Tests gap above).
+10. ~~**Frontend tests** via vitest + testing-library~~ — **done**. 24 jsdom unit tests
+    (all five components + `AkkoClient`) and 11 Storybook browser tests via
+    `@storybook/addon-vitest` (Playwright); Storybook 10 for isolated design. Jazz is
+    mocked (`.storybook/mocks/`) so Jazz-coupled components render without a runtime.
 11. Consider migrating the `ConversationStore` from linear messages to full
     tree/branch/compaction fidelity when needed (doc 04, route 3).
 
