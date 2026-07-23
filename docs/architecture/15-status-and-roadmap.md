@@ -152,8 +152,13 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
 
 **D. Multiuser/auth**
-8. **Real auth** — replace hardcoded `prn_dev`/`wsp_dev`; wire `authorize()` beyond
-   `AllowAllPolicy`; consider Jazz JWT / Better Auth.
+8. ~~**Real auth**~~ — **in progress / v1 landed** ([doc 16](./16-auth.md)): Better Auth
+   in-process (passkey + jwt plugins), tables in canonical SQLite; the gateway validates
+   the session cookie on HTTP **and** at WS upgrade to derive `principalId` (retiring the
+   trusted `?principal=` / `x-akko-principal`); `MembershipStore` + `RoleBasedPolicy`
+   replace `AllowAllPolicy`. Passkey-only signup collects full name + email then mints the
+   first passkey. *Deferred:* Jazz read-ACL via JWT/JWKS (`forRequest`), per-user
+   workspaces, account recovery.
 9. **Multiplayer rendering** — attribution per message, presence, mailbox/queue feedback.
 
 **E. Testing/infra**
@@ -177,3 +182,8 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 - **Inference** is the global pi default; no per-tenant credentials or routing yet.
 - The **write tool used during development** intermittently appends stray
   `</content>`/`</invoke>` tags to files; strip + re-verify after batch writes.
+- **Auth loose ends** (doc 16): signup fires two WebAuthn prompts (register + sign-in,
+  because Better Auth's `verify-registration` issues no session); the gateway has no CORS
+  (dev is same-origin); no committed test yet for `/api/models`, the 403 non-member
+  branches, or a live passkey round-trip; the Jazz view still uses anonymous
+  `LocalFirstAuth`, not the Better Auth JWT.

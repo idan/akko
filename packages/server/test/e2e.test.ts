@@ -12,33 +12,40 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CommittedEntry, EntryId, SessionRef, Workspace } from "@akko/core";
+import type { CommittedEntry, EntryId, PrincipalId, SessionRef, Workspace } from "@akko/core";
+import { RoleBasedPolicy } from "@akko/core";
 import {
   AkkoSessionRegistry,
   BunSqliteAdapter,
   HostWorkspaceRuntimeFactory,
   InMemoryEventBus,
+  InMemoryMembershipStore,
   SqliteConversationStore,
   SqliteSessionIndex,
   newWorkspaceId,
 } from "@akko/runtime";
 import { createGatewayServer } from "../src/gateway.ts";
 import type { HistoryMessage, ServerMessage } from "../src/protocol.ts";
+import { testAuth } from "./test-auth.ts";
 
 const storageRoot = mkdtempSync(join(tmpdir(), "akko-e2e-"));
 const db = new BunSqliteAdapter(join(storageRoot, "akko.db"));
 const eventBus = new InMemoryEventBus();
 const conversationStore = new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") });
+const memberships = new InMemoryMembershipStore();
 const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
   conversationStore,
   sessionIndex: new SqliteSessionIndex(db),
+  memberships,
+  policy: new RoleBasedPolicy(),
   eventBus,
 });
 const workspace: Workspace = { id: newWorkspaceId(), name: "e2e", storageRoot, isolation: "host" };
 registry.registerWorkspace(workspace);
+memberships.grant({ workspaceId: workspace.id, principalId: "prn_e2e" as PrincipalId, role: "owner" });
 
-const server = createGatewayServer({ registry, eventBus, port: 0 });
+const server = createGatewayServer({ registry, eventBus, auth: testAuth(), memberships, port: 0 });
 const base = `http://localhost:${server.port}`;
 const wsBase = `ws://localhost:${server.port}`;
 
@@ -48,8 +55,8 @@ afterAll(() => {
   rmSync(storageRoot, { recursive: true, force: true });
 });
 
-function connect(url: string) {
-  const ws = new WebSocket(url);
+function connect(url: string, principal: string) {
+  const ws = new WebSocket(url, { headers: { "x-test-principal": principal } });
   const queue: ServerMessage[] = [];
   const waiters: Array<(m: ServerMessage) => void> = [];
   ws.addEventListener("message", (e) => {
@@ -73,7 +80,7 @@ function connect(url: string) {
 async function createSession(): Promise<SessionRef> {
   const { ref } = await fetch(`${base}/api/sessions`, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-akko-principal": "prn_e2e" },
+    headers: { "content-type": "application/json", "x-test-principal": "prn_e2e" },
     body: JSON.stringify({ workspaceId: workspace.id }),
   }).then((r) => r.json() as Promise<{ ref: SessionRef }>);
   return ref;
@@ -85,7 +92,7 @@ describe("gateway <-> real registry (offline, always runs)", () => {
     expect(ref.workspaceId).toBe(workspace.id);
     expect(registry.isLive(ref.id)).toBe(true);
 
-    const { ws, next } = await connect(`${wsBase}/ws?principal=prn_e2e`);
+    const { ws, next } = await connect(`${wsBase}/ws`, "prn_e2e");
     expect(await next()).toEqual({ t: "welcome", principalId: "prn_e2e" });
     ws.send(JSON.stringify({ t: "subscribe", sessionId: ref.id }));
     expect(await next()).toEqual({ t: "subscribed", sessionId: ref.id });
@@ -107,7 +114,7 @@ describe("gateway <-> real registry (offline, always runs)", () => {
     );
 
     const res = await fetch(`${base}/api/sessions/${ref.id}/history`, {
-      headers: { "x-akko-principal": "prn_e2e" },
+      headers: { "x-test-principal": "prn_e2e" },
     });
     expect(res.status).toBe(200);
     const { messages } = (await res.json()) as { messages: HistoryMessage[] };
@@ -118,7 +125,7 @@ describe("gateway <-> real registry (offline, always runs)", () => {
 
   test("history for an unknown session is a 404", async () => {
     const res = await fetch(`${base}/api/sessions/ses_nope/history`, {
-      headers: { "x-akko-principal": "prn_e2e" },
+      headers: { "x-test-principal": "prn_e2e" },
     });
     expect(res.status).toBe(404);
   });
@@ -131,7 +138,7 @@ describe("gateway <-> real registry (live prompt, gated on AKKO_LIVE=1)", () => 
       return;
     }
     const ref = await createSession();
-    const { ws, next } = await connect(`${wsBase}/ws?principal=prn_e2e`);
+    const { ws, next } = await connect(`${wsBase}/ws`, "prn_e2e");
     await next(); // welcome
     ws.send(JSON.stringify({ t: "subscribe", sessionId: ref.id }));
     await next(); // subscribed

@@ -58,7 +58,7 @@ describe("AkkoClient", () => {
     expect(client.jazzIds["s1"]).toBe("co_z1");
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?workspaceId=wsp_test",
-      expect.objectContaining({ headers: { "x-akko-principal": "prn_test" } }),
+      expect.objectContaining({ credentials: "include" }),
     );
   });
 

@@ -32,6 +32,7 @@ import { AkkoMailbox } from "./mailbox.ts";
 import { AkkoModelRouter, modelRef } from "./model-router.ts";
 import { AkkoSessionRuntime, type SessionDriver } from "./session-runtime.ts";
 import { InMemorySessionIndex, type SessionIndex } from "./session-index.ts";
+import type { MembershipStore } from "./membership-store.ts";
 import type { SessionProjector } from "./session-projector.ts";
 import { newSessionId } from "./ids.ts";
 
@@ -41,6 +42,8 @@ export interface AkkoSessionRegistryDeps {
   eventBus: EventBus;
   sessionIndex?: SessionIndex;
   policy?: AuthorizationPolicy;
+  /** Source of principal→workspace roles for `authorize()` (doc 16). */
+  memberships?: MembershipStore;
   /** Optional read-model projector (e.g. Jazz). Fed committed entries; owns projection ids. */
   projector?: SessionProjector;
   /** This node's id, stamped onto `SessionRef.hostNode`. */
@@ -143,6 +146,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return this.#index.listRefs(workspaceId);
   }
 
+  /** Cheap metadata lookup from the durable index (no rehydration). */
+  async getRef(sessionId: SessionId): Promise<SessionRef | undefined> {
+    return this.#index.getRef(sessionId);
+  }
+
   /** Canonical conversation history for a session, read straight from the store. */
   async getEntries(sessionId: SessionId) {
     if (!this.#index.getRef(sessionId)) throw new Error(`unknown session: ${sessionId}`);
@@ -214,8 +222,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
   }
 
   #authorize(ref: SessionRef, command: Command): Decision | Promise<Decision> {
+    const role = this.#deps.memberships?.roleFor(ref.workspaceId, command.actorId);
     return this.#policy.authorize(
-      { principal: { id: command.actorId, kind: "user", displayName: command.actorId } },
+      {
+        principal: { id: command.actorId, kind: "user", displayName: command.actorId },
+        role,
+      },
       { kind: "command", verb: command.verb },
       { type: "session", session: ref },
     );

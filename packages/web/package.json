@@ -18,9 +18,11 @@
   "dependencies": {
     "@akko/core": "workspace:*",
     "@akko/protocol": "workspace:*",
-    "@internationalized/date": "^3.8.1",
-    "bits-ui": "^2.18.1",
     "@akko/schema": "workspace:*",
+    "@better-auth/passkey": "^1.6.24",
+    "@internationalized/date": "^3.8.1",
+    "better-auth": "^1.6.24",
+    "bits-ui": "^2.18.1",
     "jazz-tools": "2.0.0-alpha.53"
   },
   "devDependencies": {

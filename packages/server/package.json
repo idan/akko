@@ -10,9 +10,11 @@
   },
   "dependencies": {
     "@akko/core": "workspace:*",
-    "@akko/runtime": "workspace:*",
     "@akko/protocol": "workspace:*",
+    "@akko/runtime": "workspace:*",
     "@akko/schema": "workspace:*",
+    "@better-auth/passkey": "^1.6.24",
+    "better-auth": "^1.6.24",
     "jazz-tools": "2.0.0-alpha.53"
   }
 }

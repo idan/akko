@@ -62,7 +62,9 @@ export class AkkoClient {
 
   connect(): void {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws?principal=${encodeURIComponent(this.principalId)}`);
+    // Identity comes from the Better Auth session cookie (sent automatically on the
+    // same-origin upgrade), not a query param (doc 16).
+    const ws = new WebSocket(`${proto}://${location.host}/ws`);
     this.#ws = ws;
     ws.addEventListener("message", (e) => this.#onMessage(JSON.parse(String(e.data)) as ServerMessage));
     ws.addEventListener("close", () => {
@@ -108,7 +110,7 @@ export class AkkoClient {
 
   async loadSessions(): Promise<void> {
     const res = await fetch(`/api/sessions?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
-      headers: { "x-akko-principal": this.principalId },
+      credentials: "include",
     });
     const data = (await res.json()) as { sessions: SessionSummary[] };
     this.sessions = data.sessions;
@@ -118,7 +120,7 @@ export class AkkoClient {
   /** Load the available models for the workspace (doc 05) — powers the header picker. */
   async loadModels(): Promise<void> {
     const res = await fetch(`/api/models?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
-      headers: { "x-akko-principal": this.principalId },
+      credentials: "include",
     });
     if (!res.ok) return;
     const data = (await res.json()) as { models: ModelCatalogEntry[] };
@@ -135,7 +137,8 @@ export class AkkoClient {
   async createSession(title?: string, model?: string): Promise<void> {
     const res = await fetch(`/api/sessions`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-akko-principal": this.principalId },
+      credentials: "include",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ workspaceId: this.workspaceId, title: title ?? `Session ${this.sessions.length + 1}`, model }),
     });
     const data = (await res.json()) as { ref: SessionSummary };
@@ -162,7 +165,7 @@ export class AkkoClient {
     this.#historyLoaded.add(sessionId);
     try {
       const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/history`, {
-        headers: { "x-akko-principal": this.principalId },
+        credentials: "include",
       });
       if (!res.ok) throw new Error(`history ${res.status}`);
       const data = (await res.json()) as { messages: HistoryMessage[] };

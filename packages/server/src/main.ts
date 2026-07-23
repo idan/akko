@@ -2,39 +2,75 @@
  * Dev entrypoint: boots the full Akko backend and serves the gateway.
  *
  * Wires the real registry (SQLite-canonical store + durable index + host workspace
- * runtime) to the WS/HTTP gateway and registers a single dev workspace. Run with:
+ * runtime) to the WS/HTTP gateway, plus in-process Better Auth (passkeys) and the
+ * membership store + role policy (doc 16). Run with:
  *
  *   bun run packages/server/src/main.ts
  *
  * Env:
- *   AKKO_PORT       gateway port (default 8787)
- *   AKKO_DATA_DIR   data directory (default ~/.akko)
- *   AKKO_WORKSPACE  dev workspace id (default wsp_dev)
+ *   AKKO_PORT         gateway port (default 8787)
+ *   AKKO_DATA_DIR     data directory (default ~/.akko)
+ *   AKKO_WORKSPACE    dev workspace id (default wsp_dev)
+ *   AKKO_WEB_ORIGIN   browser origin of the web app (default http://localhost:5173)
+ *   AKKO_AUTH_SECRET  Better Auth signing secret (default dev-only value)
  */
 import { mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { Workspace, WorkspaceId } from "@akko/core";
+import { Database } from "bun:sqlite";
+import { getMigrations } from "better-auth/db/migration";
+import { RoleBasedPolicy, type Workspace, type WorkspaceId } from "@akko/core";
 import {
   AkkoSessionRegistry,
   BunSqliteAdapter,
   HostWorkspaceRuntimeFactory,
   InMemoryEventBus,
   SqliteConversationStore,
+  SqliteMembershipStore,
   SqliteSessionIndex,
 } from "@akko/runtime";
 import { createGatewayServer } from "./gateway.ts";
+import { createAkkoAuth } from "./auth.ts";
 import { JazzProjector } from "./jazz-projector.ts";
 import { createBackendDb, deployAkkoSchema, workerConfigFromEnv } from "./jazz-worker.ts";
 
 const port = Number(process.env.AKKO_PORT ?? 8787);
 const dataDir = process.env.AKKO_DATA_DIR ?? join(homedir(), ".akko");
 const workspaceId = (process.env.AKKO_WORKSPACE ?? "wsp_dev") as WorkspaceId;
+const webOrigin = process.env.AKKO_WEB_ORIGIN ?? "http://localhost:5173";
+const authSecret = process.env.AKKO_AUTH_SECRET ?? "akko-dev-auth-secret-change-me-0123456789abcdef";
 const storageRoot = join(dataDir, "workspaces", workspaceId);
 mkdirSync(storageRoot, { recursive: true });
 
-const db = new BunSqliteAdapter(join(dataDir, "akko.db"));
+const dbPath = join(dataDir, "akko.db");
+const db = new BunSqliteAdapter(dbPath);
 const eventBus = new InMemoryEventBus();
+
+// Membership store (doc 02/16): the durable principal→workspace→role map.
+const memberships = new SqliteMembershipStore(db);
+
+// Better Auth (doc 16) — passkeys, in-process, its tables on the same canonical DB.
+// A separate bun:sqlite handle on the same file (WAL): Better Auth manages its own tables.
+const authDb = new Database(dbPath);
+const { handler, getPrincipal, options } = createAkkoAuth({
+  db: authDb,
+  baseURL: webOrigin,
+  secret: authSecret,
+  rpID: new URL(webOrigin).hostname,
+  rpName: "Akko",
+  origin: webOrigin,
+  trustedOrigins: [webOrigin],
+  onUserCreated: (user) => {
+    // First member of the default workspace owns it (doc 16). Per-user personal
+    // workspaces are a follow-up.
+    memberships.grant({ workspaceId, principalId: user.id, role: "owner" });
+    console.log(`  auth:      registered ${user.email} (${user.id}) → owner of ${workspaceId}`);
+  },
+});
+// Create Better Auth's tables on first boot (idempotent).
+const { runMigrations } = await getMigrations(options);
+await runMigrations();
+console.log(`  auth:      Better Auth ready (passkeys) at ${webOrigin}/api/auth`);
 
 // Optional Jazz projection (doc 14): enabled when JAZZ_SYNC + app id + backend secret set.
 const workerConfig = workerConfigFromEnv();
@@ -58,6 +94,8 @@ const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
   conversationStore: new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") }),
   sessionIndex: new SqliteSessionIndex(db),
+  memberships,
+  policy: new RoleBasedPolicy(),
   eventBus,
   projector,
 });
@@ -70,9 +108,15 @@ const workspace: Workspace = {
 };
 registry.registerWorkspace(workspace);
 
-const server = createGatewayServer({ registry, eventBus, port });
+const server = createGatewayServer({
+  registry,
+  eventBus,
+  auth: { handler, getPrincipal },
+  memberships,
+  port,
+});
 
 console.log(`akko gateway listening on http://localhost:${server.port}`);
 console.log(`  workspace: ${workspaceId}`);
 console.log(`  data dir:  ${dataDir}`);
-console.log(`  ws:        ws://localhost:${server.port}/ws?principal=<id>`);
+console.log(`  ws:        ws://localhost:${server.port}/ws  (auth via session cookie)`);

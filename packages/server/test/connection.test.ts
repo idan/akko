@@ -42,6 +42,9 @@ class FakeSessions implements GatewaySessions {
     if (!this.#known.has(sessionId)) throw new Error(`unknown session: ${sessionId}`);
     return { ref: makeRef(sessionId), mailbox: fakeMailbox(this.posted) };
   }
+  async getRef(sessionId: SessionId) {
+    return this.#known.has(sessionId) ? makeRef(sessionId) : undefined;
+  }
   async createConversation() {
     return { ref: makeRef("ses_new"), mailbox: fakeMailbox(this.posted) };
   }

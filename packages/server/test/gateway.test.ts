@@ -12,6 +12,7 @@ import { InMemoryEventBus } from "@akko/runtime";
 import { createGatewayServer } from "../src/gateway.ts";
 import type { GatewaySessions } from "../src/connection.ts";
 import type { ServerMessage } from "../src/protocol.ts";
+import { testAuth, ownerMemberships } from "./test-auth.ts";
 
 let idSeq = 0;
 
@@ -36,6 +37,9 @@ class FakeSessions implements GatewaySessions {
     this.#refs.set(ref.id, ref);
     return { ref, mailbox: this.#mailbox() };
   }
+  async getRef(sessionId: SessionId) {
+    return this.#refs.get(sessionId);
+  }
   async get(sessionId: SessionId) {
     const ref = this.#refs.get(sessionId);
     if (!ref) throw new Error(`unknown session: ${sessionId}`);
@@ -54,14 +58,20 @@ class FakeSessions implements GatewaySessions {
 
 const eventBus = new InMemoryEventBus();
 const registry = new FakeSessions();
-const server = createGatewayServer({ registry, eventBus, port: 0 });
+const server = createGatewayServer({
+  registry,
+  eventBus,
+  auth: testAuth(),
+  memberships: ownerMemberships,
+  port: 0,
+});
 const base = `http://localhost:${server.port}`;
 const wsBase = `ws://localhost:${server.port}`;
 afterAll(() => server.stop(true));
 
 /** Wrap a WebSocket with an async message queue. */
-function connect(url: string) {
-  const ws = new WebSocket(url);
+function connect(url: string, principal: string) {
+  const ws = new WebSocket(url, { headers: { "x-test-principal": principal } });
   const queue: ServerMessage[] = [];
   const waiters: Array<(m: ServerMessage) => void> = [];
   ws.addEventListener("message", (e) => {
@@ -83,21 +93,21 @@ function connect(url: string) {
 }
 
 describe("gateway HTTP", () => {
-  test("POST /api/sessions creates, GET lists (principal via header)", async () => {
+  test("POST /api/sessions creates, GET lists (principal via session)", async () => {
     const created = await fetch(`${base}/api/sessions`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-akko-principal": "prn_a" },
+      headers: { "content-type": "application/json", "x-test-principal": "prn_a" },
       body: JSON.stringify({ workspaceId: "wsp_1", title: "hello" }),
     }).then((r) => r.json() as Promise<{ ref: SessionRef }>);
     expect(created.ref.title).toBe("hello");
 
     const listed = await fetch(`${base}/api/sessions?workspaceId=wsp_1`, {
-      headers: { "x-akko-principal": "prn_a" },
+      headers: { "x-test-principal": "prn_a" },
     }).then((r) => r.json() as Promise<{ sessions: SessionRef[] }>);
     expect(listed.sessions.map((s) => s.id)).toContain(created.ref.id);
   });
 
-  test("missing principal is rejected", async () => {
+  test("unauthenticated request is rejected", async () => {
     const res = await fetch(`${base}/api/sessions?workspaceId=wsp_1`);
     expect(res.status).toBe(401);
   });
@@ -108,11 +118,11 @@ describe("gateway WebSocket (real Bun.serve)", () => {
     // Create a session to talk to.
     const { ref } = await fetch(`${base}/api/sessions`, {
       method: "POST",
-      headers: { "content-type": "application/json", "x-akko-principal": "prn_bob" },
+      headers: { "content-type": "application/json", "x-test-principal": "prn_bob" },
       body: JSON.stringify({ workspaceId: "wsp_ws" }),
     }).then((r) => r.json() as Promise<{ ref: SessionRef }>);
 
-    const { ws, next } = await connect(`${wsBase}/ws?principal=prn_bob`);
+    const { ws, next } = await connect(`${wsBase}/ws`, "prn_bob");
 
     const welcome = await next();
     expect(welcome).toEqual({ t: "welcome", principalId: "prn_bob" });

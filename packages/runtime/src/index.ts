@@ -14,6 +14,7 @@ export * from "./conversation-store.ts";
 export * from "./sqlite-bun.ts";
 export * from "./sqlite-conversation-store.ts";
 export * from "./session-index.ts";
+export * from "./membership-store.ts";
 export * from "./workspace-runtime.ts";
 export * from "./session-runtime.ts";
 export * from "./session-projector.ts";

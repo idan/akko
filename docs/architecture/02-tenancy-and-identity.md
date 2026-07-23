@@ -28,6 +28,7 @@ is. So we split the problem into **invariants to bake in now** and **seams to de
 | Filesystem / exec isolation | `WorkspaceRuntime → { cwd, bashOps?, fsOps? }` | host cwd `~/workspaces/<id>` | container / micro-VM per workspace (doc 09) |
 | Which node hosts a live session | `HostResolver.resolve(sessionId) → node` | constant (this node) | affinity router / consistent hashing |
 | Per-tenant credentials & entitled models | `CredentialProvider.for(workspace) → { AuthStorage, ModelRegistry }` | one shared instance | per-workspace `auth.json`/`models.json` or a vault |
+| Authentication (who is this caller?) | Better Auth at the gateway edge; `MembershipStore` → role | passkey login → cookie → principal; single dev workspace ([doc 16](./16-auth.md)) | JWT/JWKS → Jazz read-ACL; per-user workspaces |
 | Realtime transport | `EventBus` (pub/sub by sessionId) | in-process emitter | Redis / NATS |
 | Presence / typing / cursors | additive projection state | omit | add (doc 08) |
 
@@ -94,5 +95,6 @@ caller's entitlements, not a global list (doc 05).
 
 `authorize(principal, action, resource)` is the single gate. Every mutating command
 (prompt / steer / abort / setModel / fork / spawn subagent / toggle skill) passes
-through it, and it is also where **concurrency policy** is enforced (doc 03). Today
-it returns `ALLOW`; the shape is what matters. Roles: `owner` > `editor` > `viewer`.
+through it, and it is also where **concurrency policy** is enforced (doc 03). The
+role-based implementation and how identity reaches this gate are in
+[doc 16](./16-auth.md). Roles: `owner` > `editor` > `viewer`.

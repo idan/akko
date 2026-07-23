@@ -20,6 +20,8 @@ export interface GatewaySessions {
     model?: string;
   }): Promise<{ ref: SessionRef; mailbox: Mailbox }>;
   list(workspaceId: WorkspaceId, principalId: PrincipalId): Promise<SessionRef[]>;
+  /** Cheap metadata lookup (session index only; no rehydration). */
+  getRef(sessionId: SessionId): Promise<SessionRef | undefined>;
   /** Canonical conversation history for seeding the UI on (re)select (doc 08). */
   getEntries(sessionId: SessionId): Promise<CommittedEntry[]>;
   /** Available models for a workspace (doc 05). */

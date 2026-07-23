@@ -72,3 +72,38 @@ export class AllowAllPolicy implements AuthorizationPolicy {
     return ALLOW;
   }
 }
+
+/**
+ * Role-based policy (doc 16). Resolves the decision from the actor's role in the
+ * relevant workspace (supplied on the `AuthorizationContext` by the registry, which
+ * reads it from the `MembershipStore`). A missing role means "not a member" → deny.
+ *
+ * - **owner**  — everything (incl. workspace configure / manage members)
+ * - **editor** — all session commands + read + create; not workspace management
+ * - **viewer** — read only; no mutating commands, no create
+ *
+ * Concurrency policy (turn-lock via `currentDriver`) can layer on top of this later at
+ * the same gate; for now role is the whole decision.
+ */
+export class RoleBasedPolicy implements AuthorizationPolicy {
+  authorize(ctx: AuthorizationContext, action: Action): Decision {
+    const role = ctx.role;
+    if (!role) return deny("not a member of this workspace");
+
+    switch (action.kind) {
+      case "session.read":
+        // Any member may read.
+        return ALLOW;
+      case "command":
+        // Mutating a session requires write access.
+        return role === "viewer" ? deny("viewers cannot modify a session") : ALLOW;
+      case "session.create":
+        return role === "viewer" ? deny("viewers cannot create sessions") : ALLOW;
+      case "workspace.manageMembers":
+      case "workspace.configure":
+        return role === "owner" ? ALLOW : deny("only the workspace owner may do this");
+      default:
+        return deny("unknown action");
+    }
+  }
+}

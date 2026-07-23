@@ -29,6 +29,7 @@ scoping the system. They are meant to be read in order, but each stands alone.
 | [13 — Database Choice](./13-database-choice.md) | SQLite now; not the Turso engine; SearchIndex seam for future vector retrieval |
 | [14 — Jazz Evaluation](./14-jazz-evaluation.md) | Bun-compat proven; Jazz as read/state projection (not source of truth); incremental adoption |
 | [15 — Status and Roadmap](./15-status-and-roadmap.md) | **Resume here** — current state, test coverage, how to run, prioritized next steps |
+| [16 — Authentication and Authorization](./16-auth.md) | Better Auth in-process (passkeys); cookie→principal at the edge; role-based `authorize()` |
 
 ## The one-paragraph summary
 
