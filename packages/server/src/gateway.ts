@@ -9,9 +9,9 @@
  * only the small CRUD surface needed to obtain a session id to subscribe to.
  */
 import type { Server, ServerWebSocket } from "bun";
-import type { EventBus, PrincipalId, WorkspaceId } from "@akko/core";
+import type { EventBus, PrincipalId, SessionId, WorkspaceId } from "@akko/core";
 import { GatewayConnection, type GatewaySessions } from "./connection.ts";
-import type { CreateSessionRequest } from "./protocol.ts";
+import type { CreateSessionRequest, HistoryMessage } from "./protocol.ts";
 
 export interface GatewayServerDeps {
   registry: GatewaySessions;
@@ -63,6 +63,7 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<SocketData>
             workspaceId: body.workspaceId as WorkspaceId,
             ownerId: principal as PrincipalId,
             title: body.title,
+            model: body.model,
           });
           const jazzId = deps.registry.projectionId?.(runtime.ref.id);
           return json({ ref: { ...runtime.ref, jazzId } });
@@ -79,6 +80,39 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<SocketData>
             jazzId: deps.registry.projectionId?.(ref.id),
           }));
           return json({ sessions: withJazz });
+        }
+      }
+
+      // GET /api/models?workspaceId=<id> — available models for the picker (doc 05).
+      if (url.pathname === "/api/models" && req.method === "GET") {
+        const principal = req.headers.get("x-akko-principal");
+        if (!principal) return json({ error: "missing x-akko-principal" }, 401);
+        const workspaceId = url.searchParams.get("workspaceId");
+        if (!workspaceId) return json({ error: "missing workspaceId" }, 400);
+        try {
+          const models = await deps.registry.listModels(workspaceId as WorkspaceId);
+          return json({ models });
+        } catch (error) {
+          return json({ error: error instanceof Error ? error.message : String(error) }, 400);
+        }
+      }
+
+      // GET /api/sessions/<id>/history — canonical finalized messages to seed the UI (doc 08).
+      const history = url.pathname.match(/^\/api\/sessions\/([^/]+)\/history$/);
+      if (history && req.method === "GET") {
+        const principal = req.headers.get("x-akko-principal");
+        if (!principal) return json({ error: "missing x-akko-principal" }, 401);
+        try {
+          const entries = await deps.registry.getEntries(history[1] as SessionId);
+          const messages: HistoryMessage[] = entries
+            .map((e) => {
+              const m = e.entry as { role?: string; content?: unknown };
+              return { id: e.id, role: m?.role ?? "", content: m?.content, authorId: e.actorId };
+            })
+            .filter((m) => m.role === "user" || m.role === "assistant");
+          return json({ messages });
+        } catch (error) {
+          return json({ error: error instanceof Error ? error.message : String(error) }, 404);
         }
       }
 

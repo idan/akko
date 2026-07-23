@@ -78,7 +78,10 @@ describe("registry rehydration (durable/liveness split)", () => {
     expect((runtime2.session.messages[0] as any).role).toBe("user");
 
     await registry.disposeAll();
-  });
+    // The first real session construction pays a cold `ModelRuntime.create` (model
+    // catalog load / possible network), which can exceed Bun's 5s default. Without
+    // AKKO_LIVE this test is often the first to construct one, so give it headroom.
+  }, 30_000);
 
   test("list() reads durable refs (survives eviction)", async () => {
     const { registry, workspace } = makeStack();

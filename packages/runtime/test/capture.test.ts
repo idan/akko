@@ -32,6 +32,7 @@ class FakeDriver implements SessionDriver {
   }
   async steer() {}
   async followUp() {}
+  async setModel() {}
   async abort() {}
   dispose() {}
 }

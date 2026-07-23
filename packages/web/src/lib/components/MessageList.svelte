@@ -10,8 +10,10 @@
     // touch reactive deps
     const _ = conversation.messages.length;
     const __ = conversation.messages.at(-1)?.text;
+    const ___ = conversation.awaiting;
     void _;
     void __;
+    void ___;
     if (container) container.scrollTop = container.scrollHeight;
   });
 </script>
@@ -24,4 +26,11 @@
       </div>
     </div>
   {/each}
+  {#if conversation.awaiting}
+    <div class="msg assistant">
+      <div class="bubble thinking" role="status" aria-label="Assistant is thinking">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+    </div>
+  {/if}
 </div>

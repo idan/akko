@@ -88,6 +88,8 @@ export interface SessionRef {
   parentSessionId?: SessionId;
   /** Human-readable title (mirrors pi's session_info name when set). */
   title?: string;
+  /** Resolved model id (`provider/id`) this session uses; set on create / setModel (doc 05). */
+  model?: string;
   /** Which node currently owns the live runtime (doc 03). */
   hostNode?: NodeId;
   createdAt: number;

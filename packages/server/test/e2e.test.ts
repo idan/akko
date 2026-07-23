@@ -12,7 +12,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionRef, Workspace } from "@akko/core";
+import type { CommittedEntry, EntryId, SessionRef, Workspace } from "@akko/core";
 import {
   AkkoSessionRegistry,
   BunSqliteAdapter,
@@ -23,14 +23,15 @@ import {
   newWorkspaceId,
 } from "@akko/runtime";
 import { createGatewayServer } from "../src/gateway.ts";
-import type { ServerMessage } from "../src/protocol.ts";
+import type { HistoryMessage, ServerMessage } from "../src/protocol.ts";
 
 const storageRoot = mkdtempSync(join(tmpdir(), "akko-e2e-"));
 const db = new BunSqliteAdapter(join(storageRoot, "akko.db"));
 const eventBus = new InMemoryEventBus();
+const conversationStore = new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") });
 const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
-  conversationStore: new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") }),
+  conversationStore,
   sessionIndex: new SqliteSessionIndex(db),
   eventBus,
 });
@@ -89,6 +90,37 @@ describe("gateway <-> real registry (offline, always runs)", () => {
     ws.send(JSON.stringify({ t: "subscribe", sessionId: ref.id }));
     expect(await next()).toEqual({ t: "subscribed", sessionId: ref.id });
     ws.close();
+  });
+
+  test("GET /api/sessions/:id/history returns canonical finalized messages", async () => {
+    const ref = await createSession();
+    const entry = (id: string, parentId: string | null, msg: unknown): CommittedEntry => ({
+      id: id as EntryId,
+      parentId: parentId as EntryId | null,
+      entry: msg,
+      ts: Date.now(),
+    });
+    await conversationStore.persistEntry(ref.id, entry("h1", null, { role: "user", content: "my name is Ada" }));
+    await conversationStore.persistEntry(
+      ref.id,
+      entry("h2", "h1", { role: "assistant", content: [{ type: "text", text: "Hi Ada" }] }),
+    );
+
+    const res = await fetch(`${base}/api/sessions/${ref.id}/history`, {
+      headers: { "x-akko-principal": "prn_e2e" },
+    });
+    expect(res.status).toBe(200);
+    const { messages } = (await res.json()) as { messages: HistoryMessage[] };
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({ id: "h1", role: "user", content: "my name is Ada" });
+    expect(messages[1]).toMatchObject({ id: "h2", role: "assistant" });
+  });
+
+  test("history for an unknown session is a 404", async () => {
+    const res = await fetch(`${base}/api/sessions/ses_nope/history`, {
+      headers: { "x-akko-principal": "prn_e2e" },
+    });
+    expect(res.status).toBe(404);
   });
 });
 

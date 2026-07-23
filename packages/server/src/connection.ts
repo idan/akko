@@ -5,7 +5,8 @@
  * sockets: it takes a `send` sink plus the session registry and event bus. `Bun.serve`
  * (see `gateway.ts`) is a thin adapter that constructs one of these per socket.
  */
-import type { Command, EventBus, Mailbox, PrincipalId, SessionId, SessionRef, WorkspaceId } from "@akko/core";
+import type { Command, EventBus, Mailbox, ModelCatalogEntry, PrincipalId, SessionId, SessionRef, WorkspaceId } from "@akko/core";
+import type { CommittedEntry } from "@akko/core";
 import { newCommandId } from "@akko/runtime";
 import type { ClientMessage, ServerMessage } from "./protocol.ts";
 
@@ -16,8 +17,13 @@ export interface GatewaySessions {
     workspaceId: WorkspaceId;
     ownerId: PrincipalId;
     title?: string;
+    model?: string;
   }): Promise<{ ref: SessionRef; mailbox: Mailbox }>;
   list(workspaceId: WorkspaceId, principalId: PrincipalId): Promise<SessionRef[]>;
+  /** Canonical conversation history for seeding the UI on (re)select (doc 08). */
+  getEntries(sessionId: SessionId): Promise<CommittedEntry[]>;
+  /** Available models for a workspace (doc 05). */
+  listModels(workspaceId: WorkspaceId): Promise<ModelCatalogEntry[]>;
   /** Optional external projection id (e.g. Jazz CoValue id) for a session (doc 14). */
   projectionId?(sessionId: SessionId): string | undefined;
 }

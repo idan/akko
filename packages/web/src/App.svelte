@@ -25,6 +25,7 @@
   onMount(() => {
     client.connect();
     void client.loadSessions();
+    void client.loadModels();
   });
 
   function selectSession(id: string) {

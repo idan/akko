@@ -48,6 +48,12 @@ class FakeSessions implements GatewaySessions {
   async list() {
     return [makeRef("ses_known")];
   }
+  async getEntries() {
+    return [];
+  }
+  async listModels() {
+    return [];
+  }
 }
 
 function setup() {

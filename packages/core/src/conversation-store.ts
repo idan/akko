@@ -85,4 +85,11 @@ export interface ConversationStore {
 
   /** Read the durable actor attribution for an entry (used by the Projector/UI). */
   getActor(sessionId: SessionId, entryId: EntryId): Promise<string | undefined>;
+
+  /**
+   * Read a session's committed entries in append order (canonical history). Used by the
+   * gateway to seed the UI on (re)select without bringing the session live — a cheap
+   * SQLite read, not a model rehydration (doc 04/08).
+   */
+  getEntries(sessionId: SessionId): Promise<CommittedEntry[]>;
 }

@@ -19,6 +19,7 @@ import type {
   PromptOptions,
 } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import type {
   Command,
   CommittedEntry,
@@ -36,10 +37,13 @@ import { newEntryId } from "./ids.ts";
 export interface SessionDriver {
   readonly isStreaming: boolean;
   readonly messages: AgentMessage[];
+  /** Currently selected model (undefined until one is chosen). */
+  readonly model?: Model<Api>;
   subscribe(listener: (event: AgentSessionEvent) => void): () => void;
   prompt(text: string, options?: PromptOptions): Promise<void>;
   steer(text: string): Promise<void>;
   followUp(text: string): Promise<void>;
+  setModel(model: Model<Api>): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 }
@@ -58,6 +62,10 @@ export interface AkkoSessionRuntimeOptions {
   persistedCount?: number;
   /** Extra sinks fed each committed entry (e.g. a Jazz projector). */
   entrySinks?: EntrySink[];
+  /** Resolve a human-ish model string to a concrete model (doc 05). */
+  resolveModel?: (input: string) => Model<Api> | string;
+  /** Called after a successful model change, with the canonical `provider/id`. */
+  onModelChanged?: (modelRef: string) => void;
 }
 
 export class AkkoSessionRuntime implements SessionRuntime {
@@ -66,6 +74,8 @@ export class AkkoSessionRuntime implements SessionRuntime {
   readonly #eventBus: EventBus;
   readonly #store: ConversationStore;
   readonly #entrySinks: EntrySink[];
+  readonly #resolveModel?: (input: string) => Model<Api> | string;
+  readonly #onModelChanged?: (modelRef: string) => void;
   #unsubscribe?: () => void;
   #mailbox!: Mailbox;
 
@@ -80,6 +90,8 @@ export class AkkoSessionRuntime implements SessionRuntime {
     this.#eventBus = options.eventBus;
     this.#store = options.conversationStore;
     this.#entrySinks = options.entrySinks ?? [];
+    this.#resolveModel = options.resolveModel;
+    this.#onModelChanged = options.onModelChanged;
     this.#persistedCount = options.persistedCount ?? 0;
     this.#unsubscribe = this.#driver.subscribe((event) => {
       this.#eventBus.publish({ type: "pi", sessionId: this.ref.id, event });
@@ -114,6 +126,8 @@ export class AkkoSessionRuntime implements SessionRuntime {
       case "followUp":
         this.#lastActor = command.actorId;
         return this.#driver.followUp((command.args as { text: string }).text);
+      case "setModel":
+        return this.#applySetModel((command.args as { model: string }).model);
       case "abort":
         return this.#driver.abort();
       default:
@@ -132,6 +146,19 @@ export class AkkoSessionRuntime implements SessionRuntime {
       }
       this.#driver.prompt(args.text, options).catch(reject);
     });
+  }
+
+  /** Resolve a model string and apply it to the live session, then persist + broadcast. */
+  async #applySetModel(input: string): Promise<void> {
+    if (!input) throw new Error("setModel: missing model");
+    const resolved = this.#resolveModel?.(input);
+    if (!resolved) throw new Error("setModel: no model resolver configured");
+    if (typeof resolved === "string") throw new Error(resolved); // resolver's error message
+    await this.#driver.setModel(resolved);
+    const ref = `${resolved.provider}/${resolved.id}`;
+    this.#onModelChanged?.(ref);
+    // Broadcast to every subscribed client (cross-tab) via the generic session patch.
+    this.#eventBus.publish({ type: "session", sessionId: this.ref.id, patch: { model: ref } });
   }
 
   /** Serialize captures so overlapping turn/agent_end events cannot double-persist. */

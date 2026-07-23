@@ -19,9 +19,32 @@ export interface UiMessage {
 
 export interface ConversationState {
   messages: UiMessage[];
+  /** True between sending a prompt and the assistant beginning to stream ("thinking"). */
+  awaiting?: boolean;
 }
 
-export const emptyConversation = (): ConversationState => ({ messages: [] });
+export const emptyConversation = (): ConversationState => ({ messages: [], awaiting: false });
+
+/** Mark a conversation as waiting for the assistant to start (set by the client on send). */
+export const markAwaiting = (state: ConversationState): ConversationState => ({
+  ...state,
+  awaiting: true,
+});
+
+/** A finalized message as returned by `GET /api/sessions/:id/history`. */
+export interface HistoryMessage {
+  id: string;
+  role: string;
+  content: unknown;
+}
+
+/** Seed a conversation from canonical history (doc 08). Streaming flags are all false. */
+export function seedHistory(state: ConversationState, messages: HistoryMessage[]): ConversationState {
+  const seeded: UiMessage[] = messages
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ id: m.id, role: m.role as UiMessage["role"], text: textOf(m.content), streaming: false }));
+  return { messages: seeded, awaiting: state.awaiting };
+}
 
 /** The shape the reducer reads off a `DomainEvent` (kept loose to avoid pi type coupling). */
 export interface WireEvent {
@@ -64,18 +87,27 @@ export function applyEvent(state: ConversationState, event: WireEvent): Conversa
       const role = inner.message?.role;
       if (role === "assistant") {
         messages.push({ id: nextId(), role: "assistant", text: "", streaming: true });
+        // Assistant has started: the "thinking" phase is over.
+        return { messages, awaiting: false };
       } else if (role === "user") {
         messages.push({ id: nextId(), role: "user", text: textOf(inner.message?.content), streaming: false });
+        // A user message means a turn is starting: show "thinking" on every subscribed
+        // tab (not just the optimistic sender) until the assistant starts streaming.
+        return { messages, awaiting: true };
       } else {
         return state;
       }
-      return { messages };
+    }
+    case "turn_end":
+    case "agent_end": {
+      // Safety: clear "thinking" if a turn ends without producing streamed text.
+      return state.awaiting ? { messages: state.messages, awaiting: false } : state;
     }
     case "message_update": {
       const a = inner.assistantMessageEvent;
       if (a?.type === "text_delta" && a.delta && last && last.role === "assistant" && last.streaming) {
         messages[messages.length - 1] = { ...last, text: last.text + a.delta };
-        return { messages };
+        return { messages, awaiting: false };
       }
       return state;
     }
@@ -83,7 +115,7 @@ export function applyEvent(state: ConversationState, event: WireEvent): Conversa
       if (last && last.streaming) {
         const finalText = textOf(inner.message?.content) || last.text;
         messages[messages.length - 1] = { ...last, text: finalText, streaming: false };
-        return { messages };
+        return { messages, awaiting: false };
       }
       return state;
     }

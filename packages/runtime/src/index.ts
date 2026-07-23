@@ -17,4 +17,5 @@ export * from "./session-index.ts";
 export * from "./workspace-runtime.ts";
 export * from "./session-runtime.ts";
 export * from "./session-projector.ts";
+export * from "./model-router.ts";
 export * from "./session-registry.ts";

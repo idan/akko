@@ -44,6 +44,12 @@ class FakeSessions implements GatewaySessions {
   async list(workspaceId: WorkspaceId) {
     return [...this.#refs.values()].filter((r) => r.workspaceId === workspaceId);
   }
+  async getEntries(sessionId: SessionId) {
+    return this.#refs.has(sessionId) ? [] : Promise.reject(new Error(`unknown session: ${sessionId}`));
+  }
+  async listModels() {
+    return [];
+  }
 }
 
 const eventBus = new InMemoryEventBus();

@@ -8,7 +8,8 @@
  * from the `ConversationStore`, and constructs a fresh runtime — the durable/liveness
  * split in action. `list` reads from the durable index, not just live memory.
  */
-import { createAgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, type ModelRuntime } from "@earendil-works/pi-coding-agent";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import {
   AllowAllPolicy,
   type AuthorizationPolicy,
@@ -16,6 +17,7 @@ import {
   type ConversationStore,
   type Decision,
   type EventBus,
+  type ModelCatalogEntry,
   type PrincipalId,
   type SessionId,
   type SessionRef,
@@ -27,6 +29,7 @@ import {
   type WorkspaceRuntimeFactory,
 } from "@akko/core";
 import { AkkoMailbox } from "./mailbox.ts";
+import { AkkoModelRouter, modelRef } from "./model-router.ts";
 import { AkkoSessionRuntime, type SessionDriver } from "./session-runtime.ts";
 import { InMemorySessionIndex, type SessionIndex } from "./session-index.ts";
 import type { SessionProjector } from "./session-projector.ts";
@@ -50,6 +53,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
   readonly #deps: AkkoSessionRegistryDeps;
   readonly #policy: AuthorizationPolicy;
   readonly #index: SessionIndex;
+  readonly #router = new AkkoModelRouter();
 
   constructor(deps: AkkoSessionRegistryDeps) {
     this.#deps = deps;
@@ -70,8 +74,14 @@ export class AkkoSessionRegistry implements SessionRegistry {
     if (!ref) throw new Error(`unknown session: ${sessionId}`);
     const wr = await this.#workspaceRuntime(ref.workspaceId);
     const sessionManager = await this.#deps.conversationStore.load(sessionId);
-    const { session } = await this.#buildSession(wr, sessionManager);
-    return this.#instantiate(ref, session, session.messages.length);
+    // Re-apply the persisted model choice (doc 05), if it still resolves.
+    let initialModel: Model<Api> | undefined;
+    if (ref.model) {
+      const resolved = this.#router.resolveModelString(ref.model, wr.modelRuntime);
+      if (typeof resolved !== "string") initialModel = resolved;
+    }
+    const { session } = await this.#buildSession(wr, sessionManager, initialModel);
+    return this.#instantiate(ref, session, session.messages.length, wr.modelRuntime);
   }
 
   isLive(sessionId: SessionId): boolean {
@@ -87,11 +97,20 @@ export class AkkoSessionRegistry implements SessionRegistry {
     workspaceId: WorkspaceId;
     ownerId: PrincipalId;
     title?: string;
+    model?: string;
   }): Promise<AkkoSessionRuntime> {
     const wr = await this.#workspaceRuntime(input.workspaceId);
     const sessionId = newSessionId();
     const sessionManager = await this.#deps.conversationStore.create(sessionId);
-    const { session } = await this.#buildSession(wr, sessionManager);
+
+    // Resolve an optional requested model up front so a bad string fails the create.
+    let initialModel: Model<Api> | undefined;
+    if (input.model) {
+      const resolved = this.#router.resolveModelString(input.model, wr.modelRuntime);
+      if (typeof resolved === "string") throw new Error(`model "${input.model}": ${resolved}`);
+      initialModel = resolved;
+    }
+    const { session } = await this.#buildSession(wr, sessionManager, initialModel);
 
     const now = Date.now();
     const ref: SessionRef = {
@@ -100,13 +119,20 @@ export class AkkoSessionRegistry implements SessionRegistry {
       ownerId: input.ownerId,
       kind: "conversation",
       title: input.title,
+      model: session.model ? modelRef(session.model) : undefined,
       hostNode: (this.#deps.nodeId ?? "local") as SessionRef["hostNode"],
       createdAt: now,
       updatedAt: now,
     };
     this.#index.upsertRef(ref);
     this.#deps.projector?.ensureSession(ref);
-    return this.#instantiate(ref, session, 0);
+    return this.#instantiate(ref, session, 0, wr.modelRuntime);
+  }
+
+  /** Available models for a workspace (doc 05) — powers the UI picker and the classifier. */
+  async listModels(workspaceId: WorkspaceId): Promise<ModelCatalogEntry[]> {
+    const wr = await this.#workspaceRuntime(workspaceId);
+    return this.#router.catalog(wr.modelRuntime);
   }
 
   async spawnSubagent(_options: SpawnSubagentOptions): Promise<AkkoSessionRuntime> {
@@ -115,6 +141,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
 
   async list(workspaceId: WorkspaceId, _principalId: PrincipalId): Promise<SessionRef[]> {
     return this.#index.listRefs(workspaceId);
+  }
+
+  /** Canonical conversation history for a session, read straight from the store. */
+  async getEntries(sessionId: SessionId) {
+    if (!this.#index.getRef(sessionId)) throw new Error(`unknown session: ${sessionId}`);
+    return this.#deps.conversationStore.getEntries(sessionId);
   }
 
   async evict(sessionId: SessionId): Promise<void> {
@@ -135,7 +167,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return this.#deps.workspaceRuntimeFactory.get(workspace);
   }
 
-  #buildSession(wr: WorkspaceRuntime, sessionManager: Awaited<ReturnType<ConversationStore["create"]>>) {
+  #buildSession(
+    wr: WorkspaceRuntime,
+    sessionManager: Awaited<ReturnType<ConversationStore["create"]>>,
+    model?: Model<Api>,
+  ) {
     return createAgentSession({
       cwd: wr.execution.cwd,
       agentDir: wr.agentDir,
@@ -143,10 +179,16 @@ export class AkkoSessionRegistry implements SessionRegistry {
       settingsManager: wr.settingsManager,
       resourceLoader: wr.resourceLoader,
       sessionManager,
+      model,
     });
   }
 
-  #instantiate(ref: SessionRef, session: SessionDriver, persistedCount: number): AkkoSessionRuntime {
+  #instantiate(
+    ref: SessionRef,
+    session: SessionDriver,
+    persistedCount: number,
+    modelRuntime: ModelRuntime,
+  ): AkkoSessionRuntime {
     const projector = this.#deps.projector;
     if (projector) projector.ensureSession(ref);
     const runtime = new AkkoSessionRuntime({
@@ -156,6 +198,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
       conversationStore: this.#deps.conversationStore,
       persistedCount,
       entrySinks: projector ? [projector] : [],
+      resolveModel: (input) => this.#router.resolveModelString(input, modelRuntime),
+      onModelChanged: (modelId) => {
+        const cur = this.#index.getRef(ref.id);
+        if (cur) this.#index.upsertRef({ ...cur, model: modelId, updatedAt: Date.now() });
+      },
     });
     const mailbox = new AkkoMailbox({
       authorize: (command) => this.#authorize(ref, command),

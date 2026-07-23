@@ -18,6 +18,7 @@ import type {
 export class InMemoryConversationStore implements ConversationStore {
   #managers = new Map<SessionId, SessionManager>();
   #actors = new Map<string, string>(); // `${sessionId}:${entryId}` -> actorId
+  #entries = new Map<SessionId, CommittedEntry[]>();
   readonly #cwd: string;
 
   constructor(options?: { cwd?: string }) {
@@ -39,6 +40,9 @@ export class InMemoryConversationStore implements ConversationStore {
   async persistEntry(sessionId: SessionId, entry: CommittedEntry): Promise<void> {
     // Content already lives in the in-memory SessionManager tree; record attribution.
     if (entry.actorId) this.#actors.set(`${sessionId}:${entry.id}`, entry.actorId);
+    const list = this.#entries.get(sessionId) ?? [];
+    list.push(entry);
+    this.#entries.set(sessionId, list);
   }
 
   async recordBranch(): Promise<void> {}
@@ -47,5 +51,9 @@ export class InMemoryConversationStore implements ConversationStore {
 
   async getActor(sessionId: SessionId, entryId: EntryId): Promise<string | undefined> {
     return this.#actors.get(`${sessionId}:${entryId}`);
+  }
+
+  async getEntries(sessionId: SessionId): Promise<CommittedEntry[]> {
+    return [...(this.#entries.get(sessionId) ?? [])];
   }
 }

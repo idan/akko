@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Button, Separator } from "bits-ui";
+  import { Button } from "bits-ui";
   import type { AkkoClient } from "../client.svelte.ts";
 
   let { client, onselect, oncreate }: {
@@ -14,7 +14,7 @@
     <h1>Akko</h1>
     <Button.Root class="btn primary" onclick={oncreate}>New</Button.Root>
   </header>
-  <Separator.Root class="sep" />
+  <hr class="sep" />
   <nav class="sessions">
     {#each client.sessions as s (s.id)}
       <button

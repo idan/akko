@@ -103,6 +103,21 @@ export class SqliteConversationStore implements ConversationStore {
     return row?.actor_id ?? undefined;
   }
 
+  async getEntries(sessionId: SessionId): Promise<CommittedEntry[]> {
+    const rows = this.#db
+      .prepare(
+        "SELECT entry_id, parent_id, payload_json, actor_id, ts FROM entries WHERE session_id = ? ORDER BY seq ASC",
+      )
+      .all<EntryRow>(sessionId);
+    return rows.map((row) => ({
+      id: row.entry_id as EntryId,
+      parentId: (row.parent_id as EntryId | null) ?? null,
+      entry: JSON.parse(row.payload_json) as unknown,
+      actorId: row.actor_id ?? undefined,
+      ts: row.ts,
+    }));
+  }
+
   /** Count persisted entries for a session (used by the runtime to seed its high-water). */
   count(sessionId: SessionId): number {
     const row = this.#db

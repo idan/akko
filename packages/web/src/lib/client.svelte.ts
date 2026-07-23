@@ -5,8 +5,16 @@
  * commands out and events in. Reactive `$state` fields drive the UI. Uses same-origin
  * `/api` and `/ws` (Vite proxies them to the gateway in dev).
  */
-import type { ClientMessage, ServerMessage, SessionSummary } from "@akko/protocol";
-import { applyEvent, emptyConversation, type ConversationState, type WireEvent } from "./conversation.ts";
+import type { ClientMessage, ModelCatalogEntry, ServerMessage, SessionSummary } from "@akko/protocol";
+import {
+  applyEvent,
+  emptyConversation,
+  markAwaiting,
+  seedHistory,
+  type ConversationState,
+  type HistoryMessage,
+  type WireEvent,
+} from "./conversation.ts";
 
 export class AkkoClient {
   readonly principalId: string;
@@ -15,6 +23,7 @@ export class AkkoClient {
   connected = $state(false);
   error = $state<string | null>(null);
   sessions = $state<SessionSummary[]>([]);
+  models = $state<ModelCatalogEntry[]>([]);
   activeSessionId = $state<string | null>(null);
   conversations = $state<Record<string, ConversationState>>({});
   /** Jazz projection CoValue id per session (doc 14), when the backend projector is on. */
@@ -22,6 +31,7 @@ export class AkkoClient {
 
   #ws?: WebSocket;
   #subscribed = new Set<string>();
+  #historyLoaded = new Set<string>();
   #cid = 0;
 
   constructor(opts: { principalId: string; workspaceId: string }) {
@@ -37,6 +47,11 @@ export class AkkoClient {
   get activeJazzId(): string | undefined {
     const id = this.activeSessionId;
     return id ? this.jazzIds[id] : undefined;
+  }
+
+  get activeSession(): SessionSummary | undefined {
+    const id = this.activeSessionId;
+    return id ? this.sessions.find((s) => s.id === id) : undefined;
   }
 
   #rememberJazz(refs: SessionSummary[]): void {
@@ -68,6 +83,13 @@ export class AkkoClient {
         break;
       case "event": {
         const sid = msg.event.sessionId;
+        // Session-metadata patches (e.g. model changes) update the session list so every
+        // subscribed tab stays in sync (doc 05); other events fold into the conversation.
+        if (msg.event.type === "session") {
+          const patch = (msg.event as { patch: Partial<SessionSummary> }).patch;
+          this.sessions = this.sessions.map((s) => (s.id === sid ? { ...s, ...patch } : s));
+          break;
+        }
         const prev = this.conversations[sid] ?? emptyConversation();
         this.conversations = { ...this.conversations, [sid]: applyEvent(prev, msg.event as WireEvent) };
         break;
@@ -93,11 +115,28 @@ export class AkkoClient {
     this.#rememberJazz(data.sessions);
   }
 
-  async createSession(title?: string): Promise<void> {
+  /** Load the available models for the workspace (doc 05) — powers the header picker. */
+  async loadModels(): Promise<void> {
+    const res = await fetch(`/api/models?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
+      headers: { "x-akko-principal": this.principalId },
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as { models: ModelCatalogEntry[] };
+    this.models = data.models;
+  }
+
+  /** Change the active/target session's model via an attributed command (doc 05). */
+  setModel(sessionId: string, model: string): void {
+    this.#send({ t: "command", cid: `c${this.#cid++}`, sessionId, verb: "setModel", args: { model } });
+    // Optimistic: reflect the choice immediately; the server broadcasts confirmation.
+    this.sessions = this.sessions.map((s) => (s.id === sessionId ? { ...s, model } : s));
+  }
+
+  async createSession(title?: string, model?: string): Promise<void> {
     const res = await fetch(`/api/sessions`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-akko-principal": this.principalId },
-      body: JSON.stringify({ workspaceId: this.workspaceId, title: title ?? `Session ${this.sessions.length + 1}` }),
+      body: JSON.stringify({ workspaceId: this.workspaceId, title: title ?? `Session ${this.sessions.length + 1}`, model }),
     });
     const data = (await res.json()) as { ref: SessionSummary };
     this.sessions = [data.ref, ...this.sessions];
@@ -114,6 +153,27 @@ export class AkkoClient {
       this.#subscribed.add(sessionId);
       this.#send({ t: "subscribe", sessionId });
     }
+    void this.#loadHistory(sessionId);
+  }
+
+  /** Seed canonical finalized history once per session (doc 08). Live events append after. */
+  async #loadHistory(sessionId: string): Promise<void> {
+    if (this.#historyLoaded.has(sessionId)) return;
+    this.#historyLoaded.add(sessionId);
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/history`, {
+        headers: { "x-akko-principal": this.principalId },
+      });
+      if (!res.ok) throw new Error(`history ${res.status}`);
+      const data = (await res.json()) as { messages: HistoryMessage[] };
+      const current = this.conversations[sessionId] ?? emptyConversation();
+      // Only seed if nothing has streamed in yet, so we never clobber a live turn.
+      if (current.messages.length === 0) {
+        this.conversations = { ...this.conversations, [sessionId]: seedHistory(current, data.messages) };
+      }
+    } catch {
+      this.#historyLoaded.delete(sessionId); // allow a later retry
+    }
   }
 
   sendPrompt(text: string): void {
@@ -121,5 +181,8 @@ export class AkkoClient {
     const trimmed = text.trim();
     if (!sid || !trimmed) return;
     this.#send({ t: "command", cid: `c${this.#cid++}`, sessionId: sid, verb: "prompt", args: { text: trimmed } });
+    // Optimistic "thinking" state until the assistant starts streaming.
+    const conv = this.conversations[sid] ?? emptyConversation();
+    this.conversations = { ...this.conversations, [sid]: markAwaiting(conv) };
   }
 }

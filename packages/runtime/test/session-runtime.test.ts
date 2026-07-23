@@ -41,6 +41,9 @@ class FakeDriver implements SessionDriver {
   async followUp(text: string): Promise<void> {
     this.calls.push({ m: "followUp", text });
   }
+  async setModel(): Promise<void> {
+    this.calls.push({ m: "setModel" });
+  }
   async abort(): Promise<void> {
     this.calls.push({ m: "abort" });
   }
@@ -61,7 +64,10 @@ function cmd(actor: string, verb: CommandVerb, args: unknown = {}): Command {
   };
 }
 
-function makeRuntime() {
+function makeRuntime(opts?: {
+  resolveModel?: (input: string) => any;
+  onModelChanged?: (ref: string) => void;
+}) {
   const driver = new FakeDriver();
   const bus = new InMemoryEventBus();
   const conversationStore = new InMemoryConversationStore();
@@ -73,7 +79,14 @@ function makeRuntime() {
     createdAt: 0,
     updatedAt: 0,
   };
-  const runtime = new AkkoSessionRuntime({ ref, driver, eventBus: bus, conversationStore });
+  const runtime = new AkkoSessionRuntime({
+    ref,
+    driver,
+    eventBus: bus,
+    conversationStore,
+    resolveModel: opts?.resolveModel,
+    onModelChanged: opts?.onModelChanged,
+  });
   const mailbox = new AkkoMailbox({
     authorize: () => ALLOW,
     apply: (c) => runtime.applyCommand(c),
@@ -127,9 +140,34 @@ describe("AkkoSessionRuntime", () => {
     expect(count).toBe(0);
   });
 
+  test("setModel resolves the string, applies it, persists, and broadcasts a session patch", async () => {
+    const changed: string[] = [];
+    const { driver, bus, mailbox } = makeRuntime({
+      resolveModel: (input) => (input === "haiku" ? { provider: "anthropic", id: "claude-3-5-haiku" } : `no match for "${input}"`),
+      onModelChanged: (ref) => changed.push(ref),
+    });
+    const events: string[] = [];
+    bus.subscribe("s1" as SessionId, (e) => {
+      if (e.type === "session") events.push((e.patch as { model: string }).model);
+    });
+
+    const ok = await mailbox.post(cmd("alice", "setModel", { model: "haiku" }));
+    expect(ok.accepted).toBe(true);
+    expect(driver.calls.some((c) => c.m === "setModel")).toBe(true);
+    expect(changed).toEqual(["anthropic/claude-3-5-haiku"]);
+    expect(events).toEqual(["anthropic/claude-3-5-haiku"]);
+  });
+
+  test("setModel with an unresolvable string rejects with the resolver's message", async () => {
+    const { mailbox } = makeRuntime({ resolveModel: (input) => `no match for "${input}"` });
+    const res = await mailbox.post(cmd("alice", "setModel", { model: "bogus" }));
+    expect(res.accepted).toBe(false);
+    expect(res.reason).toContain("no match");
+  });
+
   test("unimplemented verbs reject with a clear message", async () => {
     const { mailbox } = makeRuntime();
-    const res = await mailbox.post(cmd("alice", "setModel", { model: "haiku" }));
+    const res = await mailbox.post(cmd("alice", "compact"));
     expect(res.accepted).toBe(false);
     expect(res.reason).toContain("slice 1");
   });

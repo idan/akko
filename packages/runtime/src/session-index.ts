@@ -47,6 +47,7 @@ interface SessionRow {
   kind: string;
   parent_session_id: string | null;
   title: string | null;
+  model: string | null;
   host_node: string | null;
   created_at: number;
   updated_at: number;
@@ -65,22 +66,28 @@ export class SqliteSessionIndex implements SessionIndex {
         kind              TEXT NOT NULL,
         parent_session_id TEXT,
         title             TEXT,
+        model             TEXT,
         host_node         TEXT,
         created_at        INTEGER NOT NULL,
         updated_at        INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id);
     `);
+    // Migration for DBs created before the model column existed (doc 05).
+    const hasModel = this.#db
+      .prepare("SELECT COUNT(*) AS n FROM pragma_table_info('sessions') WHERE name = 'model'")
+      .get<{ n: number }>();
+    if (!hasModel || hasModel.n === 0) this.#db.exec("ALTER TABLE sessions ADD COLUMN model TEXT");
   }
 
   upsertRef(ref: SessionRef): void {
     this.#db
       .prepare(
-        `INSERT INTO sessions (id, workspace_id, owner_id, kind, parent_session_id, title, host_node, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO sessions (id, workspace_id, owner_id, kind, parent_session_id, title, model, host_node, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            workspace_id=excluded.workspace_id, owner_id=excluded.owner_id, kind=excluded.kind,
-           parent_session_id=excluded.parent_session_id, title=excluded.title,
+           parent_session_id=excluded.parent_session_id, title=excluded.title, model=excluded.model,
            host_node=excluded.host_node, updated_at=excluded.updated_at`,
       )
       .run(
@@ -90,6 +97,7 @@ export class SqliteSessionIndex implements SessionIndex {
         ref.kind,
         ref.parentSessionId ?? null,
         ref.title ?? null,
+        ref.model ?? null,
         ref.hostNode ?? null,
         ref.createdAt,
         ref.updatedAt,
@@ -122,6 +130,7 @@ export class SqliteSessionIndex implements SessionIndex {
       kind: row.kind as SessionKind,
       parentSessionId: (row.parent_session_id ?? undefined) as SessionRef["parentSessionId"],
       title: row.title ?? undefined,
+      model: row.model ?? undefined,
       hostNode: (row.host_node ?? undefined) as SessionRef["hostNode"],
       createdAt: row.created_at,
       updatedAt: row.updated_at,
