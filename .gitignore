@@ -1,4 +1,10 @@
 node_modules/
 dist/
+storybook-static/
 *.log
 .DS_Store
+
+# Local env overrides (never commit real secrets). See .env.example.
+.env
+.env.*
+!.env.example
