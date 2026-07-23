@@ -5,10 +5,12 @@
   import JazzMessageList from "./JazzMessageList.svelte";
   import Composer from "./Composer.svelte";
 
-  let { client, onmenu }: { client: AkkoClient; onmenu: () => void } = $props();
+  let { client, onmenu, jazzReady = false }: { client: AkkoClient; onmenu: () => void; jazzReady?: boolean } = $props();
 
   const active = $derived(client.sessions.find((s) => s.id === client.activeSessionId));
-  const showJazz = $derived(JAZZ_ENABLED && !!client.activeJazzId);
+  // Only offer the Jazz view when the Jazz client actually resolved (a `JazzSvelteProvider`
+  // ancestor exists); otherwise `JazzMessageList`'s query has no context (doc 16).
+  const showJazz = $derived(JAZZ_ENABLED && jazzReady && !!client.activeJazzId);
 
   // "live" = WS stream (token-by-token). "jazz" = projected read model (finalized).
   let view = $state<"live" | "jazz">("live");

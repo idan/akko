@@ -19,13 +19,20 @@
 
   // Jazz 2.0 client (opt-in): connects to the sync server authenticated with the Better
   // Auth JWT, so the read-ACL row policy filters projected messages by workspace (doc 16).
-  let jazzClient = $state<Promise<JazzClient> | null>(null);
+  // Decoupled from the core app: we only wrap the shell in the provider once the client
+  // has *successfully* resolved. A Jazz failure (e.g. JWT rejected by the sync server) is
+  // logged and leaves the read model disabled — it must never block the WS or the shell.
+  let jazzClient = $state<JazzClient | null>(null);
   $effect(() => {
     if (JAZZ_ENABLED && user && !jazzClient) {
-      jazzClient = (async () => {
-        const jwtToken = await getJazzToken();
-        if (!jwtToken) throw new Error("no Jazz token (not authenticated?)");
-        return createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
+      void (async () => {
+        try {
+          const jwtToken = await getJazzToken();
+          if (!jwtToken) return;
+          jazzClient = await createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
+        } catch (err) {
+          console.error("Jazz read model unavailable (core app unaffected):", err);
+        }
       })();
     }
   });
@@ -69,7 +76,7 @@
       </div>
     </aside>
     <main class="main">
-      <ChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      <ChatView client={c} jazzReady={!!jazzClient} onmenu={() => (sidebarOpen = !sidebarOpen)} />
     </main>
   </div>
 {/snippet}

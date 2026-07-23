@@ -139,11 +139,14 @@ Things that work but are worth revisiting:
 - **Jazz read-ACL needs live verification.** The claim + policy + `--jwks-url` wiring
   typechecks and the schema/policy compile, but the full path (browser presents JWT →
   sync server verifies via JWKS → row policy filters) needs the 3-process stack
-  (`bun run dev:jazz`) plus a browser passkey to confirm end-to-end. Two things to watch
-  at runtime: the JWT **audience** (Jazz may require a specific `aud`; tune Better Auth's
-  jwt `audience` if verification rejects), and **token refresh** — JWTs expire, and the
-  client currently fetches one at startup; `JazzClient.updateAuthToken(...)` is the seam
-  for refresh-on-expiry.
+  (`bun run dev:jazz`) plus a browser passkey to confirm end-to-end. The frontend Jazz
+  client is **decoupled** from the core app: if it fails (e.g. the sync server rejects the
+  JWT) the error is logged to the console and the read model is simply disabled — the WS,
+  session list, and message sending are unaffected. Two things to watch at runtime: the
+  JWT **audience** (Jazz may require a specific `aud`; tune Better Auth's jwt `audience`
+  if verification rejects), and **token refresh** — JWTs expire, and the client currently
+  fetches one at startup; `JazzClient.updateAuthToken(...)` is the seam for
+  refresh-on-expiry.
 
 ## Where it lives
 
