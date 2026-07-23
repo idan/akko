@@ -17,6 +17,8 @@ import { betterAuth } from "better-auth";
 import type { BetterAuthOptions } from "better-auth";
 import { jwt } from "better-auth/plugins/jwt";
 import { passkey } from "@better-auth/passkey";
+import { setSessionCookie } from "better-auth/cookies";
+import { getSessionFromCtx } from "better-auth/api";
 import type { PrincipalId } from "@akko/core";
 import { newPrincipalId } from "@akko/runtime";
 
@@ -114,6 +116,19 @@ export function createAkkoAuth(deps: AkkoAuthDeps): AkkoAuth {
               emailVerified: false,
             });
             return { id: created.id, name: created.name, displayName: created.name };
+          },
+          // Single-prompt signup (doc 16): Better Auth's `verify-registration` mints the
+          // credential but issues no session. If the registrant has no session yet, we
+          // create one and set the cookie here, so the *registration* ceremony itself
+          // lands them authenticated — no second passkey prompt.
+          afterVerification: async ({ ctx, user }) => {
+            const existing = await getSessionFromCtx(ctx).catch(() => null);
+            if (existing?.session) return;
+            const session = await ctx.context.internalAdapter.createSession(user.id);
+            if (!session) return;
+            const fullUser = await ctx.context.internalAdapter.findUserById(user.id);
+            if (!fullUser) return;
+            await setSessionCookie(ctx, { session, user: fullUser });
           },
         },
       }),

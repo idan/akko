@@ -95,12 +95,11 @@ at the gateway and return `401` (unauthenticated) / `403` (not a member).
 
 Things that work but are worth revisiting:
 
-- **Signup triggers two WebAuthn prompts.** Better Auth's passkey `verify-registration`
-  mints the credential but deliberately does *not* create a session, so `signUpWithPasskey`
-  chains a passkey sign-in right after registration (create-credential prompt, then
-  authenticate prompt). A single-prompt signup would need a small custom endpoint that
-  calls `internalAdapter.createSession` + `setSessionCookie` immediately after a verified
-  registration. Deferred deliberately to avoid reaching into plugin internals.
+- **Signup is a single WebAuthn prompt.** Better Auth's passkey `verify-registration`
+  mints the credential but issues no session, so the passkey plugin's `afterVerification`
+  hook creates a session and sets the cookie during registration (only when the registrant
+  has none yet). The one create-credential ceremony ends authenticated — no follow-up
+  sign-in.
 - **CORS is not configured on the gateway.** The old permissive `access-control-allow-*`
   headers were dropped: dev is same-origin (Vite proxies `/api` + `/ws`), and cookies +
   `allow-origin: *` are mutually exclusive anyway. A cross-origin deployment (web app on a

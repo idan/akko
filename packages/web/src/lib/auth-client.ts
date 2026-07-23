@@ -29,19 +29,15 @@ export async function currentUser(): Promise<AuthedUser | null> {
 }
 
 /**
- * Passkey-first signup: create (or reuse) the user + register a passkey, then sign in.
- *
- * Better Auth's `verify-registration` mints the passkey but does NOT create a session, so
- * on its own the user would land back on the sign-in screen. We immediately run the
- * passkey sign-in ceremony so signup ends *authenticated*, as expected. The just-created
- * credential satisfies the sign-in prompt.
+ * Passkey-first signup: create (or reuse) the user and register a passkey. The backend
+ * sets the session cookie during registration (`afterVerification`), so this ends
+ * authenticated with a single WebAuthn prompt — no follow-up sign-in needed.
  */
 export async function signUpWithPasskey(name: string, email: string): Promise<void> {
   const res = await authClient.passkey.addPasskey({
     context: JSON.stringify({ name: name.trim(), email: email.trim().toLowerCase() }),
   });
   if (res?.error) throw new Error(res.error.message ?? "passkey registration failed");
-  await signInWithPasskey();
 }
 
 /** Sign in with an existing passkey. */

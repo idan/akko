@@ -182,8 +182,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 - **Inference** is the global pi default; no per-tenant credentials or routing yet.
 - The **write tool used during development** intermittently appends stray
   `</content>`/`</invoke>` tags to files; strip + re-verify after batch writes.
-- **Auth loose ends** (doc 16): signup fires two WebAuthn prompts (register + sign-in,
-  because Better Auth's `verify-registration` issues no session); the gateway has no CORS
+- **Auth loose ends** (doc 16): the gateway has no CORS
   (dev is same-origin); no committed test yet for `/api/models`, the 403 non-member
   branches, or a live passkey round-trip; the Jazz view still uses anonymous
   `LocalFirstAuth`, not the Better Auth JWT.
