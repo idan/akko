@@ -5,6 +5,8 @@ import type { ServerMessage } from "@akko/protocol";
 /** Minimal fake WebSocket: records sent frames and lets tests emit server messages. */
 class FakeWebSocket {
   static last: FakeWebSocket | undefined;
+  static readonly OPEN = 1;
+  readyState = 1; // OPEN — the client only sends once the socket is open
   sent: string[] = [];
   #listeners: Record<string, ((e: any) => void)[]> = {};
   url: string;

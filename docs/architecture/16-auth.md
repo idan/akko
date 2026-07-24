@@ -131,6 +131,13 @@ Things that work but are worth revisiting:
 - **Two SQLite handles on one file.** Better Auth opens its own `bun:sqlite` handle on the
   same `akko.db` (WAL) as the runtime adapter. Fine in one process; if the auth surface
   ever moves out-of-process, revisit.
+- **Vite's WS proxy is broken under Bun.** Vite 8's dev proxy can't relay WebSocket
+  upgrades when Vite runs under Bun (`socket.destroySoon is not a function`) — the upgrade
+  reaches the gateway but the 101/frames never return, so the WS is stuck "offline." The
+  browser therefore connects the WS **straight to the gateway** in dev (`VITE_WS_URL`,
+  default `ws://localhost:8787/ws`); cross-port is same-site so the session cookie is
+  still sent. HTTP (`/api`) still goes through the Vite proxy, which works. Prod is
+  same-origin, so `/ws` is used directly. Revisit if a future Vite/Bun fixes the proxy.
 - **Test gaps.** The membership store and role policy have unit tests, the gateway
   HTTP/WS paths use a test auth stub, and the Jazz projector round-trips a workspace-
   stamped row; there is no committed test for the `/api/models` route, the 403 (non-

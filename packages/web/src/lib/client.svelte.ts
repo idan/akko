@@ -6,6 +6,7 @@
  * `/api` and `/ws` (Vite proxies them to the gateway in dev).
  */
 import type { ClientMessage, ModelCatalogEntry, ServerMessage, SessionSummary } from "@akko/protocol";
+import { WS_URL } from "./config.ts";
 import {
   applyEvent,
   emptyConversation,
@@ -61,10 +62,11 @@ export class AkkoClient {
   }
 
   connect(): void {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    // Identity comes from the Better Auth session cookie (sent automatically on the
-    // same-origin upgrade), not a query param (doc 16).
-    const ws = new WebSocket(`${proto}://${location.host}/ws`);
+    // Vite's dev proxy can't relay WS upgrades under Bun, so `WS_URL` points straight at
+    // the gateway in dev (cross-port is same-site, so the session cookie is still sent);
+    // in prod it's same-origin (doc 16). Identity comes from the Better Auth cookie.
+    const sameOrigin = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
+    const ws = new WebSocket(WS_URL || sameOrigin);
     this.#ws = ws;
     ws.addEventListener("message", (e) => this.#onMessage(JSON.parse(String(e.data)) as ServerMessage));
     ws.addEventListener("close", () => {
@@ -105,7 +107,10 @@ export class AkkoClient {
   }
 
   #send(msg: ClientMessage): void {
-    this.#ws?.send(JSON.stringify(msg));
+    // Guard against sending before the socket is OPEN (e.g. selecting a session while the
+    // WS is still connecting). Subscriptions are replayed on `welcome`, so a dropped send
+    // here is harmless.
+    if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.send(JSON.stringify(msg));
   }
 
   async loadSessions(): Promise<void> {
