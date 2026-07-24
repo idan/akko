@@ -98,5 +98,7 @@ completes; the browser reads reactively via `QuerySubscription`, which resolves 
 syncs. **Workspace read-ACL is now wired** (doc 16): the `messages` table carries a
 `workspaceId`, the row policy filters reads by the JWT's `workspaceId` claim (Better Auth
 jwt plugin), and the sync server verifies those JWTs via `--jwks-url` (no local-first).
-Next: live end-to-end verification of the JWT read path, migrate the default frontend read
+**The Jazz slice is closed**: the worker path (`deployAkkoSchema` + `createBackendDb` +
+`JazzProjector`) and the read-ACL are covered by committed in-process integration tests
+(`jazz-worker.test.ts`, `jazz-read-acl.test.ts`). Next: migrate the default frontend read
 path to Jazz, and token refresh-on-expiry.

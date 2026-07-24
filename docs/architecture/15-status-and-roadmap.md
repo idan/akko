@@ -51,10 +51,12 @@ Jazz server as queryable rows** (doc 14).
     but *ignores* `*.vitest.ts`. Web unit tests use the **`.vitest.ts`** suffix; story tests
     live in `*.stories.svelte`. So a plain root `bun test` runs only backend + reducer.
     Verified empirically.
-- **Covered (bun test, 50 tests):** mailbox (ordering/authz/attribution), event bus,
+- **Covered (bun test, 79 tests):** mailbox (ordering/authz/attribution), event bus,
   session-runtime entry capture, registry rehydration (durable/liveness split), SQLite
-  adapter (incl. FTS5), SQLite conversation store durability, session index, gateway
-  connection + real WS/HTTP, Jazz projector (in-memory server round-trip), the frontend
+  adapter (incl. FTS5), SQLite conversation store durability, session index, membership
+  store + `RoleBasedPolicy` (doc 16), gateway connection + real WS/HTTP (auth-stubbed),
+  Jazz projector, **Jazz read-ACL** (workspace-claim JWT isolation) and the **standalone-
+  server worker integration** (deploy + backend Db + projector round-trip), the frontend
   conversation reducer, and pi integration (construct-only always; live prompt + live WS
   round-trip under `AKKO_LIVE=1`).
 - **Covered (vitest `unit`, 24 tests):** `MessageList`, `Composer`, `SessionList`,
@@ -69,9 +71,8 @@ Jazz server as queryable rows** (doc 14).
 - **Storybook** (v10, `@storybook/svelte-vite`) for designing components in isolation.
   Stories (`*.stories.svelte`, native Svelte CSF) exist for all five components.
 - **Gaps worth filling:**
-  - `jazz-worker.ts` and `main.ts` are covered only by manual/e2e probes, not committed
-    tests (they need a running server + model). A gated integration test could cover the
-    standalone-server path.
+  - `main.ts` (full-stack boot with a live model) is still covered only by manual/e2e
+    probes. `jazz-worker.ts` is now covered by `jazz-worker.test.ts` (below).
 
 ## How to run / test
 
@@ -129,7 +130,12 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    **done** (doc 16): the `messages` table carries `workspaceId`, the row policy filters
    reads by the JWT's `workspaceId` claim, and the sync server verifies Better Auth JWTs
    via `--jwks-url` (no `--allow-local-first-auth`). Needs live end-to-end verification.
-3. A gated **standalone-server integration test** (server + backend + projector).
+3. ~~A gated **standalone-server integration test** (server + backend + projector)~~ —
+   **done** (`jazz-worker.test.ts`): drives the real `deployAkkoSchema` + `createBackendDb`
+   + `JazzProjector` against an in-process standalone server, then reads the projected
+   rows back through a workspace-member JWT (the deployed row policy). In-process
+   (`startLocalJazzServer` + `startTestJwtIssuer`), so no external process/model — runs
+   ungated in the default `bun test`. **The Jazz slice (A) is now closed.**
 
 **B. Make rehydrated sessions render history**
 4. ~~**Unify the read path**~~ — **done**. Canonical history now comes from SQLite via
