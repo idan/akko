@@ -143,17 +143,17 @@ Things that work but are worth revisiting:
   stamped row; there is no committed test for the `/api/models` route, the 403 (non-
   member) branches, or a real Better Auth session round-trip (the passkey ceremony needs
   a browser).
-- **Jazz read-ACL needs live verification.** The claim + policy + `--jwks-url` wiring
-  typechecks and the schema/policy compile, but the full path (browser presents JWT →
-  sync server verifies via JWKS → row policy filters) needs the 3-process stack
-  (`bun run dev:jazz`) plus a browser passkey to confirm end-to-end. The frontend Jazz
-  client is **decoupled** from the core app: if it fails (e.g. the sync server rejects the
-  JWT) the error is logged to the console and the read model is simply disabled — the WS,
-  session list, and message sending are unaffected. Two things to watch at runtime: the
-  JWT **audience** (Jazz may require a specific `aud`; tune Better Auth's jwt `audience`
-  if verification rejects), and **token refresh** — JWTs expire, and the client currently
-  fetches one at startup; `JazzClient.updateAuthToken(...)` is the seam for
-  refresh-on-expiry.
+- **Jazz read-ACL needs live verification.** The claim + policy + `--jwks-url` wiring is
+  proven headlessly (`jazz-read-acl.test.ts`: a `workspaceId`-claim JWT reads only its
+  own workspace's rows), but the browser path (JWT via `/api/auth/token` → sync server
+  verify → QuerySubscription) still wants a real end-to-end eyeball. Two gotchas were
+  found and fixed: **(a)** Jazz reads claims from the JWT's nested `claims` object, so
+  the policy uses `session["claims.workspaceId"]` and Better Auth's `definePayload`
+  returns `{ claims: { workspaceId } }`; **(b)** the browser Jazz client logs a benign
+  `CatalogueWriteDenied` (it isn't admin, so it can't republish the already-deployed
+  schema — reads still work). Remaining watch items: JWT **audience** (tune Better Auth's
+  jwt `audience` if the sync server rejects) and **token refresh** on expiry
+  (`JazzClient.updateAuthToken(...)`).
 
 ## Where it lives
 

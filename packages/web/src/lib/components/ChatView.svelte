@@ -8,9 +8,9 @@
   let { client, onmenu, jazzReady = false }: { client: AkkoClient; onmenu: () => void; jazzReady?: boolean } = $props();
 
   const active = $derived(client.sessions.find((s) => s.id === client.activeSessionId));
-  // Only offer the Jazz view when the Jazz client actually resolved (a `JazzSvelteProvider`
-  // ancestor exists); otherwise `JazzMessageList`'s query has no context (doc 16).
-  const showJazz = $derived(JAZZ_ENABLED && jazzReady && !!client.activeJazzId);
+  // The Jazz view queries by sessionId directly, so offer the toggle for any active
+  // session once the Jazz client has resolved (a `JazzSvelteProvider` ancestor exists).
+  const showJazz = $derived(JAZZ_ENABLED && jazzReady && !!client.activeSessionId);
 
   // "live" = WS stream (token-by-token). "jazz" = projected read model (finalized).
   let view = $state<"live" | "jazz">("live");

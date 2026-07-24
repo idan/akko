@@ -138,11 +138,12 @@ export function createAkkoAuth(deps: AkkoAuthDeps): AkkoAuth {
       jwt({
         jwt: {
           // Stamp the reader's workspace onto the JWT so the Jazz read-ACL can filter
-          // projected rows by verified claim (doc 16/14). Single-workspace v1: the first
-          // membership. The Jazz sync server verifies this JWT via Better Auth's JWKS.
+          // projected rows by verified claim (doc 16/14). Jazz reads claims from the
+          // JWT's nested `claims` object, so we return `{ claims: {...} }` (Better Auth
+          // spreads this into the payload). Single-workspace v1: the first membership.
           definePayload: ({ user }: { user: { id: string } }) => {
             const ms = deps.memberships.listForPrincipal(user.id as PrincipalId);
-            return { workspaceId: ms[0]?.workspaceId ?? "" };
+            return { claims: { workspaceId: ms[0]?.workspaceId ?? "" } };
           },
         },
       }),

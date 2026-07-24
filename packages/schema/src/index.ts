@@ -40,8 +40,10 @@ export const app = s.defineApp(appSchema);
  */
 export const permissions = s.definePermissions(app, (ctx: any) => {
   // Access is `ctx.policy.<table>` / `ctx.session.<claim>` at runtime (the alpha's
-  // factory param type is out of sync, so `ctx` is typed loosely here).
-  ctx.policy.messages.allowRead.where({ workspaceId: ctx.session.workspaceId });
+  // factory param type is out of sync, so `ctx` is typed loosely here). JWT claims are
+  // nested under `claims`, so the reader's workspace is `session.claims.workspaceId`
+  // (bracket form because the proxy doesn't chain nested property access).
+  ctx.policy.messages.allowRead.where({ workspaceId: ctx.session["claims.workspaceId"] });
   ctx.policy.messages.allowInsert.never();
 });
 
