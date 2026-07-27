@@ -4,14 +4,17 @@
 
   let { sessionId }: { sessionId: string } = $props();
 
-  // Reactive query of the projected messages table for this session (doc 14).
+  // Two reactive queries (doc 08): finalized messages + the ephemeral live `activity`
+  // (thinking → streaming). Rendering both makes the Jazz view feel as live as the WS.
   const rows = new QuerySubscription(() => app.messages.where({ sessionId }));
+  const activity = new QuerySubscription(() => app.activity.where({ sessionId }));
 
   let container: HTMLDivElement | undefined = $state();
+  const live = $derived((activity.current ?? [])[0] as { kind?: string; text?: string } | undefined);
 
-  // Tail the latest projected message as rows arrive (mirrors MessageList).
+  // Tail the latest content as rows / the streaming bubble update.
   $effect(() => {
-    const _ = rows.current?.length;
+    const _ = (rows.current?.length ?? 0) + (live?.text?.length ?? 0) + (live?.kind ? 1 : 0);
     void _;
     if (container) container.scrollTop = container.scrollHeight;
   });
@@ -23,7 +26,19 @@
     <div class="msg {m.role}">
       <div class="bubble">{m.text}</div>
     </div>
-  {:else}
-    <p class="empty">No projected messages yet.</p>
   {/each}
+  {#if live?.kind === "streaming"}
+    <div class="msg assistant">
+      <div class="bubble">{live.text}<span class="cursor">▋</span></div>
+    </div>
+  {:else if live?.kind === "thinking"}
+    <div class="msg assistant">
+      <div class="bubble thinking" role="status" aria-label="Assistant is thinking">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+      </div>
+    </div>
+  {/if}
+  {#if (rows.current ?? []).length === 0 && !live}
+    <p class="empty">No projected messages yet.</p>
+  {/if}
 </div>

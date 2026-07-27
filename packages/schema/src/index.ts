@@ -23,17 +23,31 @@ export const appSchema = {
     /** Attribution: principal id for user messages; "" for agent output (doc 04). */
     authorId: s.string(),
   }),
+  /**
+   * Ephemeral live state (doc 08): the assistant's in-flight turn — "thinking" before it
+   * streams, then "streaming" with a growing `text`. Exactly one row per session (id =
+   * `act_<sessionId>`), upserted during a turn and deleted when the finalized message
+   * lands in `messages`. This is the disposable, recreatable projection that makes the
+   * Jazz view feel live; it is never a source of truth.
+   */
+  activity: s.table({
+    sessionId: s.string(),
+    workspaceId: s.string(),
+    /** "thinking" | "streaming". */
+    kind: s.string(),
+    /** In-flight assistant text (empty while thinking). */
+    text: s.string(),
+    updatedAt: s.timestamp(),
+  }),
 };
 
 export const app = s.defineApp(appSchema);
 
 /**
- * Row-level permissions (doc 14/16). A projected message is readable **iff its
- * `workspaceId` matches the reader's `workspaceId` JWT claim** — Better Auth issues the
- * JWT (jwt plugin, JWKS), the Jazz sync server verifies it (`--jwks-url`), and this
- * policy filters rows by the verified claim. Clients never insert: the backend projector
- * writes with a privileged secret (`asBackend`) that bypasses policies. Anonymous
- * local-first auth is rejected at the server (drop `--allow-local-first-auth`).
+ * Row-level permissions (doc 14/16). Both tables are readable **iff the row's
+ * `workspaceId` matches the reader's `workspaceId` JWT claim** (nested under `claims`).
+ * Clients never write: the backend projector writes with a privileged secret (`asBackend`)
+ * that bypasses policies. Anonymous local-first auth is rejected at the server.
  *
  * Single-workspace v1: each principal carries one `workspaceId` claim. Multi-workspace
  * membership (claim as a list + an IN match) is a later extension.
@@ -43,8 +57,11 @@ export const permissions = s.definePermissions(app, (ctx: any) => {
   // factory param type is out of sync, so `ctx` is typed loosely here). JWT claims are
   // nested under `claims`, so the reader's workspace is `session.claims.workspaceId`
   // (bracket form because the proxy doesn't chain nested property access).
-  ctx.policy.messages.allowRead.where({ workspaceId: ctx.session["claims.workspaceId"] });
+  const workspace = ctx.session["claims.workspaceId"];
+  ctx.policy.messages.allowRead.where({ workspaceId: workspace });
   ctx.policy.messages.allowInsert.never();
+  ctx.policy.activity.allowRead.where({ workspaceId: workspace });
+  ctx.policy.activity.allowInsert.never();
 });
 
 /** Extract renderable text from a pi message's `content` (string or content blocks). */

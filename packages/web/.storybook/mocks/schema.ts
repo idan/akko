@@ -26,8 +26,19 @@ const FIXTURES: Record<string, Row[]> = {
   ],
 };
 
+interface ActivityRow {
+  id: string;
+  sessionId: string;
+  kind: string;
+  text: string;
+}
+const ACTIVITY: Record<string, ActivityRow[]> = {};
+
 export const app = {
   messages: {
     where: ({ sessionId }: { sessionId: string }) => ({ __rows: FIXTURES[sessionId] ?? [] }),
+  },
+  activity: {
+    where: ({ sessionId }: { sessionId: string }) => ({ __rows: ACTIVITY[sessionId] ?? [] }),
   },
 };

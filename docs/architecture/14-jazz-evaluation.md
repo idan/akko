@@ -47,7 +47,7 @@ frontend ◀──── reactive query (QuerySubscription) ──── Jazz `m
 | `Principal` attribution | a `authorId` column |
 | Workspace read-ACL | row-level **policy**: `allowRead.where({ workspaceId: session.workspaceId })` (doc 16) |
 | Canonical conversation (source of truth) | **stays in SQLite** (doc 04) |
-| Live token stream | stays on the **WS** (only finalized messages are projected) |
+| Live token stream | ephemeral `activity` row (thinking + throttled streaming), deleted on finalize |
 | Deferred auth | JWT / `LocalFirstAuth` |
 
 The relational model is a **cleaner fit than CoValues**: the `messages` table is a near

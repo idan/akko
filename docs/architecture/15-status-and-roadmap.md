@@ -120,12 +120,10 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 ## Next steps (prioritized)
 
 **A. Close out the Jazz slice**
-1. ~~Verify the **browser read path live**~~ — **verified** (browser LocalFirstAuth +
-   `QuerySubscription` renders projected rows; Live↔Jazz toggle works; Jazz view also
-   shows history after reload). Remaining Jazz-view UX gap: it renders only *finalized*
-   rows, so an in-flight turn gives no feedback (no optimistic user message, no spinner,
-   no token stream) until both messages pop in at turn end. Auto-scroll is now fixed;
-   the live-feedback gap is addressed by item 4.
+1. ~~Verify the **browser read path live**~~ — **verified**; the Jazz view renders
+   finalized rows **plus** live feedback now (see item 4): an ephemeral `activity` row
+   drives a "thinking" indicator and a progressively-**streaming** assistant bubble,
+   projected from the same pi event stream the WS consumes. Auto-scroll fixed.
 2. ~~Replace the **dev-permissive row policy** with real **workspace read-ACL**~~ —
    **done** (doc 16): the `messages` table carries `workspaceId`, the row policy filters
    reads by the JWT's `workspaceId` claim, and the sync server verifies Better Auth JWTs
@@ -144,9 +142,15 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    streaming continues over the WS. Works in the default no-Jazz setup, so the Live view
    shows history after reload **and** an in-flight turn shows an optimistic "thinking"
    indicator that is **consistent across all subscribed tabs** (raised by the user message
-   on the shared event stream, not just the optimistic sender). Jazz remains an optional read-model inspector. *Deferred:* multiplayer
-   attribution rendering (the endpoint already returns `authorId`), and merging live
-   streaming *into* the Jazz view (Jazz still shows finalized rows only).
+   on the shared event stream, not just the optimistic sender). *Deferred:* multiplayer
+   attribution rendering (the endpoint already returns `authorId`). **The Jazz view now
+   shows live streaming too** — an ephemeral `activity` table (thinking + throttled
+   streaming text) projected from the pi event stream, deleted when the finalized message
+   lands (`jazz-projector.ts`). This is phases 1–2 of the "make Jazz the sole read model"
+   plan; **phase 3 = measure** the streaming feel vs. the WS before committing to unify
+   (drop the client reducer, WS becomes commands-only). *Deferred:* user-typing presence
+   (client-scoped writes) and crash-staleness of the ephemeral row (survives a mid-turn
+   backend restart until the next turn).
 
 **C. Core features not yet built**
 5. **`ModelRouter`** (doc 05): ~~string resolver first~~ **slice 1 done** — `AkkoModelRouter`

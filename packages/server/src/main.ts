@@ -89,7 +89,7 @@ if (workerConfig) {
       });
       console.log(`  jazz:      deployed schema + policies to ${workerConfig.serverUrl}`);
     }
-    projector = new JazzProjector(createBackendDb(workerConfig));
+    projector = new JazzProjector(createBackendDb(workerConfig), eventBus);
     console.log(`  jazz:      projecting to ${workerConfig.serverUrl} (app ${workerConfig.appId})`);
   } catch (err) {
     projector = undefined;
