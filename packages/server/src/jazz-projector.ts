@@ -114,6 +114,12 @@ export class JazzProjector implements SessionProjector {
     return this.#projected.has(sessionId) ? sessionId : undefined;
   }
 
+  /** Project a session's metadata only — no history backfill, no live subscription. */
+  projectSessionMeta(ref: SessionRef): void {
+    this.#workspaceOf.set(ref.id, ref.workspaceId);
+    this.#projectSession(ref);
+  }
+
   /** Upsert the session's metadata row. Never deleted (Jazz deletes tombstone the id). */
   #projectSession(ref: SessionRef): void {
     try {

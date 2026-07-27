@@ -7,6 +7,7 @@
   import SessionList from "./lib/components/SessionList.svelte";
   import JazzSessionList from "./lib/components/JazzSessionList.svelte";
   import ChatView from "./lib/components/ChatView.svelte";
+  import JazzChatView from "./lib/components/JazzChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
 
   // The workspace is the single dev workspace for now (doc 16); the principal is the
@@ -123,7 +124,11 @@
       </div>
     </aside>
     <main class="main">
-      <ChatView client={c} jazzReady={!!jazzClient} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      {#if jazzClient}
+        <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      {:else}
+        <ChatView client={c} jazzReady={false} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      {/if}
     </main>
   </div>
 {/snippet}

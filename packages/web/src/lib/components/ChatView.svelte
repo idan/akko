@@ -5,9 +5,17 @@
   import JazzMessageList from "./JazzMessageList.svelte";
   import Composer from "./Composer.svelte";
 
-  let { client, onmenu, jazzReady = false }: { client: AkkoClient; onmenu: () => void; jazzReady?: boolean } = $props();
+  let { client, onmenu, jazzReady = false, session = undefined }: {
+    client: AkkoClient;
+    onmenu: () => void;
+    jazzReady?: boolean;
+    /** Session metadata from the read model. Falls back to the WS client's copy. */
+    session?: { title?: string; model?: string };
+  } = $props();
 
-  const active = $derived(client.sessions.find((s) => s.id === client.activeSessionId));
+  // Prefer the projected row: `client.sessions` only holds what this tab fetched over
+  // HTTP, so a session created in another tab is missing from it (doc 14).
+  const active = $derived(session ?? client.sessions.find((s) => s.id === client.activeSessionId));
   // The Jazz view queries by sessionId directly, so offer the toggle for any active
   // session once the Jazz client has resolved (a `JazzSvelteProvider` ancestor exists).
   const showJazz = $derived(JAZZ_ENABLED && jazzReady && !!client.activeSessionId);

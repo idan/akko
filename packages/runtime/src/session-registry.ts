@@ -66,6 +66,13 @@ export class AkkoSessionRegistry implements SessionRegistry {
 
   registerWorkspace(workspace: Workspace): void {
     this.#workspaces.set(workspace.id, workspace);
+    // Make the read model complete at boot: project metadata for every session already
+    // in the durable index, so the reactive session list isn't limited to sessions this
+    // process happens to touch. Metadata only — history backfill stays lazy (doc 14).
+    const projector = this.#deps.projector;
+    if (projector?.projectSessionMeta) {
+      for (const ref of this.#index.listRefs(workspace.id)) projector.projectSessionMeta(ref);
+    }
   }
 
   async get(sessionId: SessionId): Promise<AkkoSessionRuntime> {
