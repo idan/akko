@@ -44,11 +44,12 @@ frontend ◀──── reactive query (QuerySubscription) ──── Jazz `m
 | Akko concept | Jazz 2.0 concept |
 |--------------|------------------|
 | Projected conversation (read model) | rows in a `messages` **table**, keyed by `sessionId` |
+| Session list / metadata | rows in a `sessions` **table** (reactive across tabs/devices) |
 | `Principal` attribution | a `authorId` column |
-| Workspace read-ACL | row-level **policy**: `allowRead.where({ workspaceId: session.workspaceId })` (doc 16) |
+| Workspace read-ACL | row-level **policy**: `allowRead.where({ workspaceId: session.claims.workspaceId })` (doc 16) |
 | Canonical conversation (source of truth) | **stays in SQLite** (doc 04) |
-| Live token stream | ephemeral `activity` row (thinking + throttled streaming), deleted on finalize |
-| Deferred auth | JWT / `LocalFirstAuth` |
+| Live token stream | ephemeral `activity` row (thinking + throttled streaming), retired to `idle` |
+| Auth | Better Auth JWT verified via JWKS (doc 16) |
 
 The relational model is a **cleaner fit than CoValues**: the `messages` table is a near
 1:1 shape with our canonical SQLite, and "project" = "insert the same row into a synced
@@ -61,7 +62,8 @@ table."
   via a backend `Db` (`createJazzContext(...).asBackend(schema)`). Per-session CoValue
   ids disappear; the key is just `sessionId`.
 - Frontend: `CoState` on a CoValue → `QuerySubscription(() => app.messages.where(...))`;
-  provider is `JazzSvelteProvider` + `createJazzClient` + `LocalFirstAuth`.
+  provider is `JazzSvelteProvider` + `createJazzClient` (external JWT from Better Auth;
+  `LocalFirstAuth` was used during the evaluation and has been replaced).
 - Deps: dropped `cojson`/`jazz-run`; the CLI is now `jazz-tools server`.
 
 ## Costs / risks
@@ -103,27 +105,52 @@ table."
 **Migrated to 2.0-alpha and verified against a standalone server** (behind the existing
 seams; the WS path is unchanged and Jazz is opt-in):
 
-- `@akko/schema` — relational `messages` table + `defineApp` + a dev read/insert
-  **row policy** (`definePermissions`) so a local-first client can read.
-- `@akko/server` — `JazzProjector` inserts finalized messages via a backend `Db`;
-  `createBackendDb` connects to the sync server; `deployAkkoSchema` publishes the
-  schema + policies; `main.ts` deploys on boot and projects when `JAZZ_SYNC` +
-  `JAZZ_APP_ID` + `JAZZ_BACKEND_SECRET` (+ `JAZZ_ADMIN_SECRET`) are set.
-- `@akko/web` — `JazzSvelteProvider` (local-first auth) + a `QuerySubscription`-backed
-  message view, gated behind `VITE_JAZZ=1`, toggled against the live WS view.
-- **Standalone-server e2e verified on Bun**: `jazz-tools server` runs; the backend
-  deploys schema + policies to it on boot; a **real agent turn** flows through the full
-  backend and the projector writes the finalized user + assistant messages as rows in
-  the standalone server, where they are queryable. In-process test
-  (`jazz-projector.test.ts`) covers the projector against an in-memory server; 50 tests
-  green; `svelte-check` + `vite build` pass (~82 KB gzipped).
+- `@akko/schema` — relational `messages`, `sessions` and `activity` tables + `defineApp`
+  + workspace read-ACL `definePermissions` (doc 16); clients are read-only.
+- `@akko/server` — `JazzProjector` projects finalized messages, session metadata and the
+  ephemeral in-flight `activity` row via a backend `Db`, and **backfills** a session's
+  history from canonical SQLite (`rebuild`); `createBackendDb` connects to the sync
+  server; `deployAkkoSchema` publishes the schema + policies; `main.ts` deploys on boot
+  and projects when `JAZZ_SYNC` + `JAZZ_APP_ID` + `JAZZ_BACKEND_SECRET`
+  (+ `JAZZ_ADMIN_SECRET`) are set.
+- `@akko/web` — `JazzSvelteProvider` (Better Auth JWT, memory driver) +
+  `QuerySubscription`-backed message list, session list and chat header, gated behind
+  `VITE_JAZZ=1`.
+- **Verified live**: `jazz-tools server` runs on Bun; the backend deploys schema +
+  policies on boot; a real agent turn flows through the full backend; and **two browser
+  tabs render from the read model** — session list, in-flight thinking/streaming, and
+  finalized messages all sync, with the workspace row-ACL enforced off the Better Auth
+  JWT. 86 backend tests green; `svelte-check` + `vite build` pass (~82 KB gzipped).
 
 Note: a fresh one-shot query on a cold context returns empty until local-first sync
 completes; the browser reads reactively via `QuerySubscription`, which resolves as data
-syncs. **Workspace read-ACL is now wired** (doc 16): the `messages` table carries a
-`workspaceId`, the row policy filters reads by the JWT's `workspaceId` claim (Better Auth
-jwt plugin), and the sync server verifies those JWTs via `--jwks-url` (no local-first).
-**The Jazz slice is closed**: the worker path (`deployAkkoSchema` + `createBackendDb` +
-`JazzProjector`) and the read-ACL are covered by committed in-process integration tests
-(`jazz-worker.test.ts`, `jazz-read-acl.test.ts`). Next: migrate the default frontend read
-path to Jazz, and token refresh-on-expiry.
+syncs. **Workspace read-ACL is wired and verified** (doc 16): every projected table carries a
+`workspaceId`, the row policy filters reads by the JWT's `claims.workspaceId` (Better Auth
+jwt plugin), and the sync server verifies those JWTs via `--jwks-url`. The worker path
+(`deployAkkoSchema` + `createBackendDb` + `JazzProjector`) and the read-ACL are covered by
+committed in-process integration tests (`jazz-worker.test.ts`, `jazz-read-acl.test.ts`).
+
+## Debugging the read model
+
+`bun run jazz:probe <sessionId> [jwt]` (`packages/server/scripts/jazz-probe.mjs`) reads a
+running sync server twice — **as backend** (privileged, policy bypassed) and **as a user**
+(external JWT, policy applied). That splits the space cleanly when the UI shows nothing:
+
+| Probe result | Meaning |
+|--------------|---------|
+| backend 0 rows | the projector's writes never reached the server |
+| backend rows, user 0 rows | the row policy is filtering server-side |
+| both have rows | browser-side (driver/worker staleness, or the component) |
+
+The raw JWT is logged by the frontend under `VITE_JAZZ_DEBUG=1`; the projector logs its
+writes under `AKKO_JAZZ_DEBUG=1`.
+
+**Testing rule learned the hard way:** a projection test that reads back through the
+**same `Db` that wrote the row proves nothing** — local-first clients always see their own
+writes, even when the row never reaches the server or is refused by policy. Two real bugs
+(the delete tombstone and the missing backfill) hid behind exactly that shape. Projection
+tests must read from a **separate client**, and lifecycle bugs need a **multi-turn**
+scenario.
+
+Next: migrate the default frontend read path to Jazz (unify step 2, doc 15) and token
+refresh-on-expiry.

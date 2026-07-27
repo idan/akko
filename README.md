@@ -15,23 +15,26 @@ An opinionated, minimalistic personal agentic system built on top of the
 
 ## Status
 
-Early implementation. `packages/core` holds the interfaces (the compilable shape of
-the system, single-user today and multiuser-by-construction). `packages/runtime` has
-the first working slice: id generation, an in-memory event bus, the per-session
-mailbox (actor model), a session runtime + registry that drive pi via
-`createAgentSession`, an in-memory conversation store, and a host workspace-runtime
-factory.
+Early implementation, but end-to-end usable. `packages/core` holds the interfaces (the
+compilable shape of the system, multiuser-by-construction). `packages/runtime` implements
+them: id generation, an in-memory event bus, the per-session mailbox (actor model), a
+session runtime + registry that drive pi via `createAgentSession`, SQLite-canonical
+conversation storage, a session index, and a workspace membership store.
 
-**Verified end-to-end on Bun** (`bun test`): 62 tests green across `@akko/runtime`,
+You can **sign up with a passkey, chat with a real agent, and watch it stream** — with the
+session list, in-flight state and message history rendering from a synced read model that
+stays live across tabs and devices.
+
+**Verified end-to-end on Bun** (`bun test`): 86 tests green across `@akko/runtime`,
 `@akko/server`, and `@akko/web` (backend + pure reducer), including SQLite (FTS5)
 durability + rehydration, a canonical history endpoint, model routing (string resolver +
-catalog), a live pi prompt, a **live WebSocket round-trip** (`AKKO_LIVE=1`), and the
-frontend conversation reducer. The Svelte frontend adds **32 jsdom unit tests** (all five
-components + the `AkkoClient` runes store, via vitest + `@testing-library/svelte`) and
-**12 Storybook browser tests** (each story's `play` run under Playwright via
-`@storybook/addon-vitest`), plus **Storybook 10** for designing components in isolation.
-The web app type-checks (`svelte-check`) and builds (`vite build`). See the
-implementation order in doc 10.
+catalog), passkey-auth plumbing (membership store + role policy), the Jazz projection
+(history backfill, session metadata, live streaming) and its workspace read-ACL, a live pi
+prompt and a **live WebSocket round-trip** (`AKKO_LIVE=1`). The Svelte frontend adds
+**34 jsdom unit tests** (via vitest + `@testing-library/svelte`) and **12 Storybook browser
+tests** (each story's `play` run under Playwright via `@storybook/addon-vitest`), plus
+**Storybook 10** for designing components in isolation. The web app type-checks
+(`svelte-check`) and builds (`vite build`). See the implementation order in doc 10.
 
 ## Run it
 
@@ -66,22 +69,24 @@ bun --filter '@akko/web' storybook   # Storybook 10 on :6006
 
 Jazz is **not the source of truth** — SQLite is (doc 04). The app is fully functional
 without it: the live chat streams over the WebSocket and renders from the conversation
-reducer, and sessions persist/rehydrate from SQLite. Jazz (doc 14) is a *secondary,
-synced read-model* — the backend projects **finalized** messages into a relational
-`messages` table you can toggle to in the chat header ("Live" ↔ "Jazz").
+reducer, and sessions persist/rehydrate from SQLite. Jazz (doc 14) is a *synced
+read-model* — the backend projects the session list, finalized messages, and the in-flight
+turn (thinking + streaming text) into relational tables the browser queries reactively.
 
 So there genuinely are two modes, and each side is gated independently:
 
 - **Backend** enables the projector only when `JAZZ_SYNC` + `JAZZ_APP_ID` +
   `JAZZ_BACKEND_SECRET` are set (otherwise it logs `jazz: disabled`).
 - **Frontend** is a static Vite bundle, so it reads a build-time flag,
-  **`VITE_JAZZ=1`** (exposed as `import.meta.env.VITE_JAZZ`). Only then does it create
-  the `LocalFirstAuth` + Jazz client, wrap the app in `JazzSvelteProvider`, and show the
-  Jazz view. Without a running sync server that setup would fail, so it must be opt-in.
+  **`VITE_JAZZ=1`** (exposed as `import.meta.env.VITE_JAZZ`). Only then does it fetch a
+  Better Auth JWT, create the Jazz client, wrap the app in `JazzSvelteProvider`, and
+  render from the read model. Without a running sync server that setup would fail, so it
+  must be opt-in.
 
 Jazz is kept optional on purpose: `jazz-tools` is still `2.0.0-alpha` (pinned, expect
 breaking changes), and it needs a third process + secrets — too much for the everyday
-loop. Making Jazz the default read path is a future step (doc 15, item B.4).
+loop. **Making Jazz the sole read model is in progress** — see the unify plan in doc 15
+(step 1, the reactive session list, is done).
 
 **No `.env` is required** — `dev`/`dev:jazz` work with zero config, and model credentials
 come from pi's agent dir (`~/.pi/agent/auth.json`), configured via pi itself. If you'd
@@ -105,9 +110,12 @@ JAZZ_SYNC=http://localhost:4200 \
   JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin \
   bun run dev:server
 
-# 3) frontend: queries the Jazz messages table (opt-in)
+# 3) frontend: renders from the Jazz read model (opt-in)
 VITE_JAZZ=1 bun run dev:web
 # in the chat header, toggle "Live" <-> "Jazz"
+#
+# verbose diagnostics (fish/bash): AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev:jazz
+# inspect the sync server:          bun run jazz:probe <sessionId> [jwt]
 ```
 
 ## Test & check
@@ -122,7 +130,7 @@ The frontend uses **vitest** (not `bun:test`) for components + the runes store, 
 `*.stories.svelte` (stories) so `bun test` ignores them and the two runners never collide:
 
 ```bash
-bun --filter '@akko/web' test            # 32 jsdom unit tests (components + store)
+bun --filter '@akko/web' test            # 34 jsdom unit tests (components + store)
 bun --filter '@akko/web' test:storybook  # 12 story tests in a real browser (Playwright)
 bun --filter '@akko/web' test:all        # both web vitest projects
 bun --filter '@akko/web' storybook       # Storybook 10 — design components in isolation

@@ -2,39 +2,46 @@
 
 **Read this first when resuming.** It is the single source of truth for where the
 project is, what is proven, how to run it, and what to do next. The numbered docs
-00–14 hold the *why* behind each decision; this doc holds the *state* and the *plan*.
+00–16 hold the *why* behind each decision; this doc holds the *state* and the *plan*.
 
-_Last updated: after wiring the Jazz projection to a standalone `jazz-tools server`._
+_Last updated: after passkey auth (doc 16), the Jazz read-ACL, and step 1 of making
+Jazz the sole read model (reactive session list)._
 
 ## Current state (what works end-to-end)
 
-A browser can talk to the backend and drive a real agent, and the conversation is
-projected into a synced database:
+A browser authenticates with a passkey, drives a real agent, and renders from a synced
+read model that is live across tabs, devices and workspace members:
 
 ```
 browser (Svelte 5 + bits-ui)
-  ── HTTP: create/list sessions ─────────────▶ gateway
-  ── WS:  attributed command (prompt) ───────▶ mailbox → SessionRuntime → pi (Anthropic default)
+  ── passkey sign-in ──▶ Better Auth (in-process, doc 16) ──▶ session cookie
+  ── HTTP: create/list sessions ($cookie) ────────▶ gateway
+  ── WS:  attributed command (prompt) ───────────▶ mailbox → authorize() → SessionRuntime → pi
   ◀─ WS:  streaming events (text/tool/lifecycle)
                                                │ committed entries →
-                                               ├─▶ SQLite (canonical, doc 04)  ── lazy rehydration
-                                               └─▶ JazzProjector → standalone jazz-tools server (read-model, opt-in)
+                                               ├─▶ SQLite (canonical, doc 04) ── lazy rehydration
+                                               └─▶ JazzProjector ──▶ jazz-tools server
+                                                     • messages  (finalized, backfilled)
+                                                     • activity  (thinking + streaming)
+                                                     • sessions  (reactive session list)
+  ◀─ Jazz (JWT, workspace row-ACL): reactive queries render the above
 ```
 
-Verified on Bun: live prompt over the WS returns streamed assistant text; SQLite
-persistence + lazy rehydration; and a **real agent turn projected into a standalone
-Jazz server as queryable rows** (doc 14).
+Verified live: passkey signup/sign-in, a real agent turn streaming over the WS, SQLite
+persistence + lazy rehydration, and the **Jazz read model driving the UI across two
+tabs** — session list, in-flight thinking/streaming, and finalized messages all sync
+without socket fan-out.
 
 ## Package status
 
 | Package | What | State |
 |---------|------|-------|
-| `@akko/core` | domain model + interfaces (seams only) | interfaces only, by design |
+| `@akko/core` | domain model + interfaces (seams only) + `RoleBasedPolicy` | interfaces only, by design |
 | `@akko/protocol` | shared WS/HTTP wire types | done |
-| `@akko/runtime` | ids, event bus, mailbox, session runtime + registry (drives pi), SQLite adapter + conversation store + session index | done, tested |
-| `@akko/server` | Bun.serve WS+HTTP gateway (CQRS) + Jazz projector/worker + dev entry | done, tested |
-| `@akko/schema` | Jazz 2.0 relational `messages` table + row policy | done |
-| `@akko/web` | Svelte 5 + bits-ui frontend: session list, live chat, composer, Jazz view toggle | first slice done |
+| `@akko/runtime` | ids, event bus, mailbox, session runtime + registry (drives pi), SQLite adapter + conversation store + session index + membership store | done, tested |
+| `@akko/server` | Bun.serve WS+HTTP gateway (CQRS) + Better Auth (passkeys) + Jazz projector/worker + dev entry | done, tested |
+| `@akko/schema` | Jazz 2.0 relational `messages` / `activity` / `sessions` tables + workspace read-ACL | done |
+| `@akko/web` | Svelte 5 + bits-ui frontend: passkey auth, session list, live chat, composer, Jazz read model | done for the current slice |
 
 ## Tests
 
@@ -51,45 +58,61 @@ Jazz server as queryable rows** (doc 14).
     but *ignores* `*.vitest.ts`. Web unit tests use the **`.vitest.ts`** suffix; story tests
     live in `*.stories.svelte`. So a plain root `bun test` runs only backend + reducer.
     Verified empirically.
-- **Covered (bun test, 79 tests):** mailbox (ordering/authz/attribution), event bus,
-  session-runtime entry capture, registry rehydration (durable/liveness split), SQLite
-  adapter (incl. FTS5), SQLite conversation store durability, session index, membership
-  store + `RoleBasedPolicy` (doc 16), gateway connection + real WS/HTTP (auth-stubbed),
-  Jazz projector, **Jazz read-ACL** (workspace-claim JWT isolation) and the **standalone-
-  server worker integration** (deploy + backend Db + projector round-trip), the frontend
-  conversation reducer, and pi integration (construct-only always; live prompt + live WS
-  round-trip under `AKKO_LIVE=1`).
-- **Covered (vitest `unit`, 24 tests):** `MessageList`, `Composer`, `SessionList`,
-  `ChatView` (title/messages/placeholder/menu/error + composer→`sendPrompt`),
-  `JazzMessageList` (projected rows + empty, Jazz deps mocked), and the `AkkoClient`
-  runes store (`loadSessions`/`createSession`/welcome-resubscribe/event-fold/`sendPrompt`/
-  error) with mocked `fetch` + `WebSocket`.
-- **Covered (vitest `storybook`, 11 browser tests):** every story renders + its `play`
+- **Covered (bun test, 86 tests):** mailbox (ordering/authz/attribution), event bus,
+  session-runtime entry capture (incl. **monotonic entry timestamps**, which read models
+  order by), registry rehydration (durable/liveness split), **registry boot projection**,
+  SQLite adapter (incl. FTS5), SQLite conversation store durability, session index,
+  membership store + `RoleBasedPolicy` (doc 16), gateway connection + real WS/HTTP
+  (auth-stubbed), Jazz projector (**history backfill, session metadata, live
+  thinking/streaming, and the two-turn regression**), **Jazz read-ACL** (workspace-claim
+  JWT isolation) and the **standalone-server worker integration** (deploy + backend Db +
+  projector round-trip, read back by a *separate* JWT client), the frontend conversation
+  reducer, and pi integration (construct-only always; live prompt + live WS round-trip
+  under `AKKO_LIVE=1`).
+- **Covered (vitest `unit`, 34 tests):** `MessageList`, `Composer`, `SessionList`
+  (presentational: data props in, callbacks out), `ChatView`
+  (title/messages/placeholder/menu/error + composer→`sendPrompt`), `JazzMessageList`
+  (projected rows, empty, streaming bubble, thinking indicator — Jazz deps mocked), and
+  the `AkkoClient` runes store (`loadSessions`/`createSession`/welcome-resubscribe/
+  event-fold/`sendPrompt`/error) with mocked `fetch` + `WebSocket`.
+- **Covered (vitest `storybook`, 12 browser tests):** every story renders + its `play`
   runs — `Composer`, `MessageList`, `SessionList`, `ChatView` (types + sends, error alert),
   `JazzMessageList` (projected + empty). Jazz is mocked via Vite aliases in
   `.storybook/main.ts` (`.storybook/mocks/`), so no live runtime/wasm is needed.
 - **Storybook** (v10, `@storybook/svelte-vite`) for designing components in isolation.
-  Stories (`*.stories.svelte`, native Svelte CSF) exist for all five components.
+  Stories (`*.stories.svelte`, native Svelte CSF) exist for the five core components.
+- **A hard-won testing rule (doc 14):** a projection test that reads back through the
+  **same `Db` that wrote it proves nothing** — local-first clients always see their own
+  writes, even when the row never reaches the server or is rejected by policy. Two real
+  bugs hid behind exactly that shape. Projection tests must read from a **separate
+  client**, and lifecycle bugs need a **multi-turn** scenario.
 - **Gaps worth filling:**
   - `main.ts` (full-stack boot with a live model) is still covered only by manual/e2e
-    probes. `jazz-worker.ts` is now covered by `jazz-worker.test.ts` (below).
+    probes. `jazz-worker.ts` is covered by `jazz-worker.test.ts`.
 
 ## How to run / test
 
 ```bash
 bun install
-bun run dev:server      # gateway :8787 + dev workspace (wsp_dev)
-bun run dev:web         # Vite :5173 (proxies /api + /ws)
+bun run dev             # server (:8787) + web (:5173), no Jazz
+bun run dev:jazz        # sync (:4200) + server + web, Jazz read model on (3 processes)
 
-# with the Jazz projection (3 processes — see README):
-bun run dev:sync        # standalone jazz-tools server :4200
-JAZZ_SYNC=http://localhost:4200 JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf \
-  JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin bun run dev:server
-VITE_JAZZ=1 bun run dev:web
+# NOTE: after ANY @akko/schema change you must fully restart dev:jazz — the in-memory
+# sync server keeps its old schema catalogue and dev:server does not auto-restart (doc 14).
+
+# verbose diagnostics (fish: prefix inline, no `env` needed)
+AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev:jazz
+
+# inspect what is actually stored in a running sync server (doc 14):
+bun run jazz:probe <sessionId> [jwt]   # reads AS BACKEND (policy bypassed) and AS USER
+
+# dev data helpers (doc 16):
+bun run db:reset                 # wipe the whole SQLite db (users + conversations)
+bun run db:delete-user <email>   # remove one user (passkey/session/account/memberships)
 
 bun test                # backend + reducer (bun:test); ignores *.vitest.ts
 AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
-# per-package typecheck: ./node_modules/.bin/tsc --noEmit -p packages/<pkg>/tsconfig.json
+# per-package typecheck: bun x tsc --noEmit -p packages/<pkg>/tsconfig.json
 # frontend: cd packages/web && bun run check   (svelte-check) ; bun run build (vite)
 #   web unit tests (vitest + jsdom):        bun --filter '@akko/web' test
 #   story tests as browser tests (Playwright): bun --filter '@akko/web' test:storybook
@@ -106,7 +129,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 | Multiuser tenancy, identity, ID format (prefixed nanoid) | 02 |
 | Durable/liveness split, per-session mailbox (actor model), subagents-as-sessions | 03 |
 | Storage: single-writer, SQLite-canonical, Projector seam | 04 |
-| Model routing (string vs task) — **not built yet** | 05 |
+| Model routing (string vs task) — string resolver **done**, classifier not built | 05 |
 | Skills + system-prompt impact — **not built yet** | 06 |
 | Memory — deferred; seam only | 07 |
 | Frontend/realtime CQRS, presence (design) | 08 |
@@ -125,9 +148,9 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    drives a "thinking" indicator and a progressively-**streaming** assistant bubble,
    projected from the same pi event stream the WS consumes. Auto-scroll fixed.
 2. ~~Replace the **dev-permissive row policy** with real **workspace read-ACL**~~ —
-   **done** (doc 16): the `messages` table carries `workspaceId`, the row policy filters
-   reads by the JWT's `workspaceId` claim, and the sync server verifies Better Auth JWTs
-   via `--jwks-url` (no `--allow-local-first-auth`). Needs live end-to-end verification.
+   **done and verified live** (doc 16): every projected table carries `workspaceId`, the
+   row policy filters reads by the JWT's `workspaceId` claim, and the sync server verifies
+   Better Auth JWTs via `--jwks-url`.
 3. ~~A gated **standalone-server integration test** (server + backend + projector)~~ —
    **done** (`jazz-worker.test.ts`): drives the real `deployAkkoSchema` + `createBackendDb`
    + `JazzProjector` against an in-process standalone server, then reads the projected
@@ -150,15 +173,49 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    plan. **Phase-3 finding (measured):** Jazz's local-first sync is **eventually
    consistent and coalesces rapid updates** — transient states (a brief "thinking" before
    streaming) are often swallowed before they become queryable, streaming text arrives in
-   coalesced jumps rather than smoothly, and there's propagation lag vs. the WS. Lowering
-   `STREAM_FLUSH_MS` (now 40ms) reduces choppiness but can't beat the coalescing/latency.
-   So Jazz is a great *state* read model (history, final messages, presence) but the WS
-   is still better for *high-frequency token streaming*. **Open decision:** full unify
-   (WS commands-only) likely wants a hybrid — Jazz for state, WS deltas for the live token
-   stream — rather than pushing every token through Jazz. Defensive logging added
+   coalesced jumps rather than smoothly, and there's propagation lag vs. the WS. That
+   measurement was taken *before* the four Jazz bugs below were found; with them fixed and
+   `STREAM_FLUSH_MS` at 40ms the streaming was judged **good enough in live use**, so the
+   coalescing is a tuning concern rather than a blocker. Defensive logging added
    (`AKKO_JAZZ_DEBUG=1` backend, `VITE_JAZZ_DEBUG=1` frontend); the event bus now isolates
    listener failures so a projector error can't break WS delivery. *Deferred:* user-typing
    presence, crash-staleness of the ephemeral row.
+
+**A2. Making Jazz the sole read model (the unify plan)**
+
+Decided after the phase-3 measurement: go **all-in on Jazz for reads** rather than a
+hybrid. The hybrid (sockets for streaming, Jazz for settled state) was rejected because it
+keeps two rendering paths *and* loses the multiplayer property — with WS streaming only
+subscribed clients see the in-flight text, whereas the `activity` row gives every observer
+(other tabs, devices, members) the same in-flight state with no fan-out code. Straddling
+two read paths also *caused* two real bugs (see below), which is the strongest argument
+against staying in the middle.
+
+The destination is **HTTP for commands + Jazz for all reads** — no WebSocket at all,
+retiring ~800 lines of read-path machinery (`conversation.ts`, `client.svelte.ts`,
+`connection.ts` and their tests).
+
+1. ~~**Project session metadata** → reactive session list~~ — **done + verified live
+   across two tabs.** New `sessions` table; `registerWorkspace` projects metadata for
+   every session in the durable index at boot (so the list is complete, not just sessions
+   this process touched); `setModel` re-projects the ref. `SessionList` is now
+   presentational, fed by `JazzSessionList` (a `QuerySubscription` *inside* the provider)
+   or the WS client.
+2. **Make Jazz the default read path**, drop the Live/Jazz toggle. Keep the WS running but
+   unused for reads — a free safety net while living on it. Fold in: `SessionIndex.touch()`
+   is never called, so `updatedAt` only moves on create/model-change (sessions don't float
+   to the top when messaged); and session **rename** has no command yet.
+3. **Move commands to HTTP**, delete the WS + reducer + event folding. The `● connected`
+   indicator becomes Jazz's connection state. Least reversible — before doing it, measure:
+   two tabs on one session, a throttled network, and rows/sec written per turn (write
+   amplification at the 40ms flush).
+4. **Presence/typing + per-message attribution** — cheap once everything is a Jazz table
+   (the history endpoint already returns `authorId`).
+
+**Risk being managed:** jazz-tools is alpha, and this session alone surfaced four
+non-obvious behaviours (below). Making Jazz load-bearing for everything means an alpha
+regression takes down the whole UI, so the WS is retired **last** and the `Projector` seam
+(doc 04) is kept so a fallback is a config flip, not a rewrite.
 
 **C. Core features not yet built**
 5. **`ModelRouter`** (doc 05): ~~string resolver first~~ **slice 1 done** — `AkkoModelRouter`
@@ -172,20 +229,22 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
 
 **D. Multiuser/auth**
-8. ~~**Real auth**~~ — **in progress / v1 landed** ([doc 16](./16-auth.md)): Better Auth
+8. ~~**Real auth**~~ — **done, verified live** ([doc 16](./16-auth.md)): Better Auth
    in-process (passkey + jwt plugins), tables in canonical SQLite; the gateway validates
    the session cookie on HTTP **and** at WS upgrade to derive `principalId` (retiring the
    trusted `?principal=` / `x-akko-principal`); `MembershipStore` + `RoleBasedPolicy`
-   replace `AllowAllPolicy`. Passkey-only signup collects full name + email then mints the
-   first passkey. *Deferred:* per-user
-   workspaces, account recovery.
+   replace `AllowAllPolicy`. Passkey-only signup collects full name + email and mints the
+   first passkey in a **single** WebAuthn prompt. The Jazz read-ACL runs off the same JWT.
+   *Deferred:* per-user workspaces, account recovery, gateway CORS.
 9. **Multiplayer rendering** — attribution per message, presence, mailbox/queue feedback.
+   (Unify step 4; note two members of a workspace currently see all of its sessions, which
+   is the intended single-workspace v1 shape — isolation is per *workspace*, not per user.)
 
 **E. Testing/infra**
-10. ~~**Frontend tests** via vitest + testing-library~~ — **done**. 24 jsdom unit tests
-    (all five components + `AkkoClient`) and 11 Storybook browser tests via
-    `@storybook/addon-vitest` (Playwright); Storybook 10 for isolated design. Jazz is
-    mocked (`.storybook/mocks/`) so Jazz-coupled components render without a runtime.
+10. ~~**Frontend tests** via vitest + testing-library~~ — **done**. 34 jsdom unit tests
+    and 12 Storybook browser tests via `@storybook/addon-vitest` (Playwright); Storybook 10
+    for isolated design. Jazz is mocked (`.storybook/mocks/`) so Jazz-coupled components
+    render without a runtime.
 11. Consider migrating the `ConversationStore` from linear messages to full
     tree/branch/compaction fidelity when needed (doc 04, route 3).
 
@@ -195,15 +254,35 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 
 ## Known gaps & caveats
 
-- **Local-first read latency:** a fresh one-shot Jazz query returns empty until sync
-  completes; the browser reads reactively via `QuerySubscription` (doc 14).
 - **jazz-tools is alpha** (`2.0.0-alpha.x`) — pinned; expect breaking changes on bumps.
+  **Four non-obvious behaviours cost real debugging time** (all fixed, all now covered by
+  tests — details in doc 14):
+  1. **Deletes are tombstones.** Re-`upsert`ing a deleted row id fails forever
+     (`WriteError: row already deleted`). The `activity` row is now retired to
+     `kind: "idle"` instead of deleted. Symptom: the live indicator worked on a session's
+     first turn and never again.
+  2. **The browser client must use `driver: { type: "memory" }`.** The default
+     (`persistent`) is an OPFS store behind a SharedWorker that outlives the `--in-memory`
+     dev sync server, so the browser reads a stale local database. Symptom: queries
+     succeed, return **0 rows, no error**.
+  3. **The projection must be rebuilt from canonical.** `rebuild()` was a stub, so a
+     session's history was missing from Jazz after any sync-server restart.
+  4. **`CatalogueWriteDenied` in the browser console is benign.** The client re-publishes
+     an already-deployed schema and is refused because catalogue writes are admin-only.
+     It is a `WARN`, not a read failure — it cost several rounds as a red herring.
+- **Schema changes need a full `dev:jazz` restart** — the in-memory sync server keeps its
+  old catalogue and `dev:server` doesn't auto-restart (doc 14).
+- **Local-first read latency:** a fresh one-shot Jazz query returns empty until sync
+  completes; the browser reads reactively via `QuerySubscription` (doc 14). Transient
+  states can be **coalesced away** entirely, so don't assert on them.
+- **Row order is not insertion order** in Jazz (ids are content-derived) — queries must
+  `orderBy("createdAt")`, and entry timestamps are monotonic so that ordering is correct.
 - **ConversationStore** persists linear conversation only (no branch/compaction yet).
 - **Inference** is the global pi default; no per-tenant credentials or routing yet.
+- **Vite's WS proxy is broken under Bun** (`socket.destroySoon is not a function`), so the
+  browser connects the WS straight to the gateway in dev via `VITE_WS_URL` (doc 16).
 - The **write tool used during development** intermittently appends stray
   `</content>`/`</invoke>` tags to files; strip + re-verify after batch writes.
-- **Auth loose ends** (doc 16): the gateway has no CORS
-  (dev is same-origin); no committed test yet for `/api/models` or the 403 non-member
-  branches; the Jazz read-ACL (JWT claim + `--jwks-url` verification) typechecks and
-  compiles but needs live end-to-end verification (3-process stack + browser passkey),
-  plus JWT token refresh-on-expiry.
+- **Auth loose ends** (doc 16): no gateway CORS (dev is same-origin); no committed test
+  for `/api/models` or the 403 non-member branches; JWT refresh-on-expiry is not wired
+  (`JazzClient.updateAuthToken(...)` is the seam).

@@ -48,8 +48,9 @@ now" invariant from doc 02 in code form.
 ### `authz.ts` — the single gate (doc 02/03)
 `AuthorizationPolicy.authorize(ctx, action, resource)` is the choke point every
 mutating command passes through, and where concurrency policy is expressed.
-`AllowAllPolicy` is the day-one single-user implementation. Swapping in a real
-role/state-aware policy touches no callers.
+`AllowAllPolicy` was the day-one stub; `RoleBasedPolicy` (owner/editor/viewer, fed by
+the `MembershipStore`) is what runs now — swapping it touched no callers, which was the
+point (doc 16).
 
 ### `workspace.ts` — tenancy → pi params (doc 01/02/09)
 `WorkspaceRuntime` is the resolved bundle of pi's per-call parameters for one
@@ -136,22 +137,25 @@ session-facing view over `NodeDirectory`.
    lazy rehydration done**; subagents next. **WS gateway done** (`@akko/server`):
    `Bun.serve` WS + HTTP, CQRS (attributed commands -> mailbox, `EventBus` -> clients),
    verified end-to-end against the real registry over a live WebSocket.
-5. `ModelRouter` (string resolver first, then the classifier).
+5. ◑ `ModelRouter` — **string resolver done** (`AkkoModelRouter`, `GET /api/models`,
+   per-session model + picker); the task classifier is next (doc 05).
 6. `SkillsService`.
-7. ◑ Frontend (Svelte 5 + bits-ui) against `@akko/server` — **first slice done**
-   (`@akko/web`): session list, live streaming chat, composer; typed WS/HTTP client +
-   pure conversation reducer; responsive/mobile layout. Wire types extracted to
-   `@akko/protocol` so the browser build pulls no `bun`/pi runtime. Backlog fetch for
-   rehydrated sessions, multi-client attribution rendering, and auth next.
-8. ◑ **Jazz projector** — thin vertical slice done on **`jazz-tools@2.0-alpha`**
-   (relational DB, doc 14): `@akko/schema` `messages` table, backend `JazzProjector`
-   inserting rows via a backend `Db`, frontend `QuerySubscription` read view (opt-in via
-   `VITE_JAZZ`), proven by an in-process test against a local Jazz server. Bundle ~82 KB
-   gzipped. Next: standalone server e2e, row policies, migrate default reads, JWT auth.
-9. Later: container isolation, `MemoryProvider` + `SearchIndex`,
+7. ◑ Frontend (Svelte 5 + bits-ui) against `@akko/server` — **done for this slice**
+   (`@akko/web`): passkey auth, session list, live streaming chat, composer; typed
+   WS/HTTP client + pure conversation reducer; responsive/mobile layout. Wire types
+   extracted to `@akko/protocol` so the browser build pulls no `bun`/pi runtime.
+8. ✅ **Jazz projector** — on **`jazz-tools@2.0-alpha`** (relational DB, doc 14):
+   `@akko/schema` `messages` / `sessions` / `activity` tables with a workspace read-ACL,
+   backend `JazzProjector` (finalized messages, session metadata, in-flight
+   thinking/streaming, plus history **backfill** from canonical), and frontend
+   `QuerySubscription` views (opt-in via `VITE_JAZZ`). Verified live across two browser
+   tabs. Bundle ~82 KB gzipped. Next: make Jazz the sole read model (doc 15 unify plan).
+9. ✅ **Auth** — Better Auth in-process, passkeys only, workspace memberships +
+   `RoleBasedPolicy` (doc 16).
+10. Later: subagents, container isolation, `MemoryProvider` + `SearchIndex`,
    `HostResolver`/`NodeDirectory` + node↔Hub link (distributed execution, doc 12).
 
 > Progress lives in `packages/{runtime,server,web,schema,protocol}`, verified with
-> `bun test` (50 tests; live pi prompt + live WS round-trip under `AKKO_LIVE=1`; SQLite
-> FTS5; durable rehydration; Jazz projection cross-account read) plus `svelte-check` +
-> `vite build`.
+> `bun test` (86 tests; live pi prompt + live WS round-trip under `AKKO_LIVE=1`; SQLite
+> FTS5; durable rehydration; Jazz projection + read-ACL read back by a separate client)
+> plus `svelte-check` + `vite build` and 34 web unit tests.

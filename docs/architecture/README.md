@@ -42,4 +42,6 @@ which is where authorization and concurrency policy live. Canonical conversation
 content is persisted through a **ConversationStore** seam; everything else
 (identity, ACL, attribution, indexes, memory) lives in our own database. Clients
 never write authoritative state — they send commands and render a projected,
-realtime view. This shape is single-user today and multiuser-by-construction.
+realtime view. This shape is multiuser-by-construction: identity is on every record and
+command from day one, and authentication (passkeys, doc 16) and the workspace read-ACL
+are wired end-to-end.

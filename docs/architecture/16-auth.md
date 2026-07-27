@@ -101,7 +101,8 @@ Better Auth jwt plugin  ──JWT { sub, workspaceId }──▶  browser
   and `allowInsert.never()` keeps clients read-only (the backend projector writes with a
   privileged secret that bypasses policies).
 - **Frontend**: the browser fetches a JWT from `/api/auth/token` and passes it as
-  `createJazzClient({ jwtToken })` (replacing the anonymous `LocalFirstAuth` secret).
+  `createJazzClient({ jwtToken, driver: { type: "memory" } })` (replacing the anonymous
+  `LocalFirstAuth` secret; the memory driver is required — see doc 14).
 
 ## What is deferred (designed, not built)
 
@@ -143,17 +144,18 @@ Things that work but are worth revisiting:
   stamped row; there is no committed test for the `/api/models` route, the 403 (non-
   member) branches, or a real Better Auth session round-trip (the passkey ceremony needs
   a browser).
-- **Jazz read-ACL needs live verification.** The claim + policy + `--jwks-url` wiring is
-  proven headlessly (`jazz-read-acl.test.ts`: a `workspaceId`-claim JWT reads only its
-  own workspace's rows), but the browser path (JWT via `/api/auth/token` → sync server
-  verify → QuerySubscription) still wants a real end-to-end eyeball. Two gotchas were
-  found and fixed: **(a)** Jazz reads claims from the JWT's nested `claims` object, so
-  the policy uses `session["claims.workspaceId"]` and Better Auth's `definePayload`
-  returns `{ claims: { workspaceId } }`; **(b)** the browser Jazz client logs a benign
-  `CatalogueWriteDenied` (it isn't admin, so it can't republish the already-deployed
-  schema — reads still work). Remaining watch items: JWT **audience** (tune Better Auth's
-  jwt `audience` if the sync server rejects) and **token refresh** on expiry
-  (`JazzClient.updateAuthToken(...)`).
+- **Jazz read-ACL is verified end-to-end.** Proven headlessly
+  (`jazz-read-acl.test.ts`: a `workspaceId`-claim JWT reads only its own workspace's rows)
+  **and live in the browser** (JWT via `/api/auth/token` → sync server JWKS verify →
+  `QuerySubscription`). Three gotchas found along the way: **(a)** Jazz reads claims from
+  the JWT's nested `claims` object, so the policy uses `session["claims.workspaceId"]` and
+  Better Auth's `definePayload` returns `{ claims: { workspaceId } }`; **(b)** the browser
+  Jazz client logs a benign `CatalogueWriteDenied` — it isn't admin, so it can't republish
+  the already-deployed schema; reads are unaffected; **(c)** the browser client must use
+  `driver: { type: "memory" }`, or a stale OPFS/SharedWorker store silently returns zero
+  rows (doc 14). EdDSA and Better Auth's `iss`/`aud` were both confirmed acceptable to the
+  sync server. Remaining watch item: **token refresh** on expiry
+  (`JazzClient.updateAuthToken(...)` is the seam; tokens are ~15 min).
 
 ## Where it lives
 

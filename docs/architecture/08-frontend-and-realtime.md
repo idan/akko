@@ -6,9 +6,17 @@
   mobile.**
 - Talks to the backend over a **WebSocket** (events + commands) with HTTP for
   non-streaming operations (listing, config).
-- Optionally uses **Jazz** for local-first realtime collaborative state (presence,
-  typing, drafts, and a projected message view) — see doc 04 for why Jazz is a
-  projection, never canonical.
+- Uses **Jazz** for local-first realtime read state — the session list, projected
+  messages, and the in-flight `activity` row (thinking/streaming), with presence and
+  drafts to come. See doc 04 for why Jazz is a projection, never canonical.
+
+> **Direction of travel (doc 15, "unify plan").** Jazz is becoming the **sole read
+> model**, with the WebSocket reduced to commands and then retired in favour of HTTP
+> commands. The end state is **HTTP for commands + Jazz for all reads**, which deletes
+> the client-side event reducer, the subscription bookkeeping and the fan-out described
+> below. The CQRS shape is unchanged — only the *read* transport moves. Sections below
+> describe the WS read path that is being phased out; they remain accurate for the
+> non-Jazz (`bun run dev`) configuration.
 
 ## CQRS: commands in, events out
 
@@ -53,14 +61,19 @@ Svelte against the same event stream. See doc 03 and doc 05.
 
 ## Presence and multiplayer affordances
 
-Deferred but designed-for (additive, doc 02):
+Partly built, the rest additive (doc 02):
 
-- **Presence** — who is in a session right now.
-- **Typing indicators / cursors** — ephemeral Jazz state.
+- **In-flight turn state** — **built**: an ephemeral `activity` row per session carries
+  the sender's prompt, a "thinking" indicator and the streaming assistant text, so every
+  observer (other tabs, devices, members) sees the same in-flight state with no fan-out.
+- **Presence** — who is in a session right now. Deferred.
+- **Typing indicators / cursors** — ephemeral Jazz state; would be the first sanctioned
+  *client* write (non-authoritative, scoped to the writer's own principal). Deferred.
 - **Attribution rendering** — show which participant sent each message (backed by the
-  per-entry `actorId` side-field, doc 04); optionally the model is author-aware.
+  per-entry `actorId` side-field, doc 04, already projected as `authorId`); optionally
+  the model is author-aware. Deferred.
 - **Concurrency feedback** — reflect the mailbox/queue state ("Bob is steering…"),
-  driven by pi's `queue_update` events plus our attribution.
+  driven by pi's `queue_update` events plus our attribution. Deferred.
 
 ## Extension UI over the wire
 
