@@ -15,7 +15,8 @@
     "dev:web": "bun run --filter '@akko/web' dev",
     "dev:sync": "bunx jazz-tools@alpha server e0c77d7c-fc80-5775-8a1d-7f74d66410bf --port 4200 --in-memory --jwks-url http://localhost:8787/api/auth/jwks --backend-secret akko-dev-backend --admin-secret akko-dev-admin",
     "db:reset": "bun scripts/db-reset.mjs",
-    "db:delete-user": "bun scripts/db-delete-user.mjs"
+    "db:delete-user": "bun scripts/db-delete-user.mjs",
+    "jazz:probe": "bun packages/server/scripts/jazz-probe.mjs"
   },
   "devDependencies": {
     "@types/bun": "latest",
