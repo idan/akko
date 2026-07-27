@@ -152,5 +152,8 @@ writes, even when the row never reaches the server or is refused by policy. Two 
 tests must read from a **separate client**, and lifecycle bugs need a **multi-turn**
 scenario.
 
-Next: migrate the default frontend read path to Jazz (unify step 2, doc 15) and token
-refresh-on-expiry.
+Jazz is now the **default read model** in the `VITE_JAZZ=1` configuration: the session
+list, message history and the in-flight turn all render from reactive queries, and the
+Live/Jazz toggle is gone (the WS reducer view remains the fallback when Jazz is off).
+Next: retire the WebSocket entirely in favour of HTTP commands (unify step 3, doc 15) and
+token refresh-on-expiry.

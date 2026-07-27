@@ -4,8 +4,25 @@
 project is, what is proven, how to run it, and what to do next. The numbered docs
 00–16 hold the *why* behind each decision; this doc holds the *state* and the *plan*.
 
-_Last updated: after passkey auth (doc 16), the Jazz read-ACL, and step 1 of making
-Jazz the sole read model (reactive session list)._
+_Last updated: after passkey auth (doc 16), the Jazz read-ACL, and **steps 1–2 of the
+unify plan** — Jazz is now the default read model (reactive session list + message view;
+the Live/Jazz toggle is gone)._
+
+## ▶ Pick up here
+
+**Next action: unify step 3** — move commands to HTTP and delete the WebSocket, the
+client-side conversation reducer and the event fan-out (~800 lines). See
+[the unify plan](#a2-making-jazz-the-sole-read-model-the-unify-plan) below for the full
+sequence and rationale.
+
+**Do this first:** step 3 is the least reversible move, so take the three measurements
+agreed before committing to it — two tabs on one session, a throttled network, and
+rows/sec written per turn (write amplification at the 40ms `STREAM_FLUSH_MS`). If any
+look bad, step 2 is a perfectly good resting place and the WS stays.
+
+Smaller, independent things you could do instead: session **rename** (the `rename` verb
+exists in `CommandVerb`, unimplemented), the **task classifier** for `ModelRouter`
+(doc 05, C5), or **subagents** (doc 03, C6).
 
 ## Current state (what works end-to-end)
 
@@ -181,7 +198,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    listener failures so a projector error can't break WS delivery. *Deferred:* user-typing
    presence, crash-staleness of the ephemeral row.
 
-**A2. Making Jazz the sole read model (the unify plan)**
+### A2. Making Jazz the sole read model (the unify plan)
 
 Decided after the phase-3 measurement: go **all-in on Jazz for reads** rather than a
 hybrid. The hybrid (sockets for streaming, Jazz for settled state) was rejected because it
