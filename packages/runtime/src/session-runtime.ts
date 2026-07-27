@@ -82,6 +82,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
   #persistedCount: number;
   #lastEntryId: string | null = null;
   #lastActor?: PrincipalId;
+  #lastTs = 0;
   #captureChain: Promise<void> = Promise.resolve();
 
   constructor(options: AkkoSessionRuntimeOptions) {
@@ -171,12 +172,18 @@ export class AkkoSessionRuntime implements SessionRuntime {
     for (let i = this.#persistedCount; i < messages.length; i++) {
       const message = messages[i]!;
       const id = newEntryId();
+      // Strictly increasing: a turn's user + assistant messages are captured in the same
+      // tick, so a plain Date.now() ties and any consumer that orders by `ts` gets an
+      // arbitrary order (the Jazz read model sorts by it, which put replies before
+      // prompts). Monotonic timestamps preserve pi's message order.
+      const ts = Math.max(Date.now(), this.#lastTs + 1);
+      this.#lastTs = ts;
       const entry: CommittedEntry = {
         id,
         parentId: this.#lastEntryId as CommittedEntry["parentId"],
         entry: message,
         actorId: message.role === "user" ? this.#lastActor : undefined,
-        ts: Date.now(),
+        ts,
       };
       await this.#store.persistEntry(this.ref.id, entry);
       this.#eventBus.publish({ type: "entry", sessionId: this.ref.id, entry });

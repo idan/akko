@@ -92,6 +92,32 @@ describe("AkkoSessionRuntime entry capture", () => {
     expect(entryEvents).toEqual(["user", "assistant"]);
   });
 
+  test("entry timestamps are strictly increasing (read models order by ts)", async () => {
+    const driver = new FakeDriver();
+    const store = new SpyStore();
+    const bus = new InMemoryEventBus();
+    const runtime = new AkkoSessionRuntime({ ref, driver, eventBus: bus, conversationStore: store });
+    runtime.attachMailbox(new AkkoMailbox({ authorize: () => ALLOW, apply: (c) => runtime.applyCommand(c) }));
+
+    // A turn's messages are all captured in the same tick. A plain Date.now() ties, and
+    // a consumer ordering by `ts` (the Jazz read model) then renders the reply before the
+    // prompt — so capture must hand out strictly increasing timestamps.
+    driver.messages = [
+      { role: "user", content: "q", timestamp: 1 },
+      { role: "assistant", content: [{ type: "text", text: "a" }], timestamp: 1 },
+      { role: "assistant", content: [{ type: "text", text: "b" }], timestamp: 1 },
+    ];
+    driver.emit({ type: "agent_end" } as unknown as AgentSessionEvent);
+    await runtime.dispose();
+
+    const stamps = store.persisted.map((e) => e.ts);
+    expect(stamps.length).toBe(3);
+    for (let i = 1; i < stamps.length; i++) expect(stamps[i]!).toBeGreaterThan(stamps[i - 1]!);
+    // Ordering by ts must reproduce pi's message order.
+    const byTs = [...store.persisted].sort((a, b) => a.ts - b.ts).map((e) => (e.entry as any).role);
+    expect(byTs).toEqual(["user", "assistant", "assistant"]);
+  });
+
   test("does not re-persist already-captured messages", async () => {
     const driver = new FakeDriver();
     const store = new SpyStore();
