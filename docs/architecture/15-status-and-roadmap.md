@@ -16,9 +16,22 @@ client-side conversation reducer and the event fan-out (~800 lines). See
 sequence and rationale.
 
 **Do this first:** step 3 is the least reversible move, so take the three measurements
-agreed before committing to it — two tabs on one session, a throttled network, and
-rows/sec written per turn (write amplification at the 40ms `STREAM_FLUSH_MS`). If any
-look bad, step 2 is a perfectly good resting place and the WS stays.
+agreed before committing to it:
+
+1. ~~**Write amplification** — rows/sec written per turn at the 40ms `STREAM_FLUSH_MS`~~ —
+   **measured, and it passes** (`jazz-write-amplification.test.ts`). Streaming costs
+   **~24 row-writes/sec while a turn is in flight, and nothing between turns**, because
+   the projector leading-edge-throttles deltas into a single `activity` row: 400 tokens
+   over 2.35s cost 57 writes (a 7× reduction vs. one-per-token), and the rate is capped at
+   `1000/STREAM_FLUSH_MS` ≈ 25/s **regardless of how fast the model emits**. It is one row
+   × N revisions, so cost tracks *turn duration*, not token count or observer count.
+   Verdict: bounded and acceptable — this does not block step 3.
+2. **Two tabs on one session** — needs a browser; confirm both see the same in-flight text
+   and neither flickers.
+3. **Throttled network** — needs a browser; confirm streaming degrades gracefully rather
+   than stalling the composer.
+
+If 2 or 3 look bad, step 2 is a perfectly good resting place and the WS stays.
 
 Smaller, independent things you could do instead: session **rename** (the `rename` verb
 exists in `CommandVerb`, unimplemented), the **task classifier** for `ModelRouter`
