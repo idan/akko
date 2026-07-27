@@ -137,12 +137,38 @@ describe("JazzProjector live activity (thinking + streaming)", () => {
     expect(act[0]?.text).toBe("Hello");
     expect(act[0]?.userText).toBe("hi there"); // the sender's prompt shows before turn-end capture
 
-    // The finalized message lands in `messages`; the ephemeral activity row is retired.
+    // The finalized message lands in `messages`; the ephemeral activity row is retired
+    // to `idle` (never deleted — a Jazz delete tombstones the id forever).
     await projector.onEntry(r.id, entry("e1", assistantMsg("Hello")));
-    const cleared = await poll("ses_act1", (rows) => rows.length === 0);
-    expect(cleared).toHaveLength(0);
+    const cleared = await poll("ses_act1", (rows) => rows[0]?.kind === "idle");
+    expect(cleared[0]?.kind).toBe("idle");
     const msgs = await db.all(app.messages.where({ sessionId: "ses_act1" }));
     expect(msgs.map((m) => m.text)).toContain("Hello");
+  });
+
+  test("a SECOND turn still streams (regression: deleting tombstoned the activity id)", async () => {
+    const bus = new InMemoryEventBus();
+    const projector = new JazzProjector(db, { eventBus: bus });
+    const r = ref("ses_act3", "Two turns");
+    projector.ensureSession(r);
+
+    // Turn 1: stream, then finalize (retires the row).
+    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "q1" } });
+    emit(bus, r.id, { type: "message_start", message: { role: "assistant" } });
+    emit(bus, r.id, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "answer one" } });
+    expect((await poll("ses_act3", (rows) => rows[0]?.text === "answer one"))[0]?.text).toBe("answer one");
+    await projector.onEntry(r.id, entry("t1", assistantMsg("answer one"), undefined, 1));
+    await poll("ses_act3", (rows) => rows[0]?.kind === "idle");
+
+    // Turn 2 on the SAME session reuses the same derived activity id. Previously this
+    // failed with `WriteError: row already deleted`, so the live view worked exactly once.
+    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "q2" } });
+    emit(bus, r.id, { type: "message_start", message: { role: "assistant" } });
+    emit(bus, r.id, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "answer two" } });
+    const second = await poll("ses_act3", (rows) => rows[0]?.text === "answer two");
+    expect(second[0]?.kind).toBe("streaming");
+    expect(second[0]?.text).toBe("answer two");
+    expect(second[0]?.userText).toBe("q2");
   });
 
   test("a thinking-only turn shows the prompt, then clears on turn_end", async () => {
@@ -157,7 +183,7 @@ describe("JazzProjector live activity (thinking + streaming)", () => {
     expect(act[0]?.userText).toBe("ping");
 
     emit(bus, r.id, { type: "turn_end" });
-    const cleared = await poll("ses_act2", (rows) => rows.length === 0);
-    expect(cleared).toHaveLength(0);
+    const cleared = await poll("ses_act2", (rows) => rows[0]?.kind === "idle");
+    expect(cleared[0]?.kind).toBe("idle");
   });
 });

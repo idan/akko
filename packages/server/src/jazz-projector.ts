@@ -8,7 +8,12 @@
  *    event stream on the `EventBus` — the user's prompt (shown immediately, since
  *    canonical entries are only captured at turn end), a "thinking" indicator, then a
  *    "streaming" assistant bubble with throttled growing `text`. One row per session
- *    (`act_<sessionId>`), deleted when the finalized message lands in `messages`.
+ *    (`act_<sessionId>`), retired to `kind: "idle"` when the finalized message lands.
+ *
+ * The activity row is **never deleted**: Jazz deletes are tombstones, and re-`upsert`ing a
+ * deleted id fails permanently (`WriteError: row already deleted`) — which would make the
+ * live indicator work on a session's first turn and never again. Retiring to `idle`
+ * (which the UI renders as nothing) keeps the id reusable for every subsequent turn.
  *
  * This is what makes the Jazz view feel as live as the WS. Jazz is never the source of
  * truth — canonical content is SQLite (doc 04). Every Jazz write is wrapped so a
@@ -185,7 +190,7 @@ export class JazzProjector implements SessionProjector {
     this.#turn.set(sessionId, t);
   }
 
-  #writeActivity(sessionId: SessionId, kind: "thinking" | "streaming"): void {
+  #writeActivity(sessionId: SessionId, kind: "thinking" | "streaming" | "idle"): void {
     const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
     try {
       this.#db.upsert(
@@ -206,17 +211,19 @@ export class JazzProjector implements SessionProjector {
     }
   }
 
+  /**
+   * Retire the live bubble. Writes `kind: "idle"` rather than deleting: a Jazz delete is a
+   * tombstone and the id could never be reused, breaking every turn after the first.
+   */
   #clearActivity(sessionId: SessionId): void {
     const t = this.#turn.get(sessionId);
     if (t?.timer) clearTimeout(t.timer);
     this.#turn.delete(sessionId);
     if (this.#active.has(sessionId)) {
-      try {
-        this.#db.delete(app.activity, activityId(sessionId));
-        debug("activity cleared", sessionId);
-      } catch (error) {
-        console.error(`[jazz] failed to clear activity for ${sessionId}:`, error);
-      }
+      this.#turn.set(sessionId, { userText: "", text: "" });
+      this.#writeActivity(sessionId, "idle");
+      this.#turn.delete(sessionId);
+      debug("activity idled", sessionId);
       this.#active.delete(sessionId);
     }
   }

@@ -13,9 +13,10 @@
   const activity = new QuerySubscription(() => app.activity.where({ sessionId }));
 
   let container: HTMLDivElement | undefined = $state();
-  const live = $derived(
-    (activity.current ?? [])[0] as { kind?: string; userText?: string; text?: string } | undefined,
-  );
+  // The activity row is retired to `kind: "idle"` between turns (never deleted — Jazz
+  // deletes are tombstones), so treat idle as "nothing in flight".
+  const current = $derived((activity.current ?? [])[0] as { kind?: string; userText?: string; text?: string } | undefined);
+  const live = $derived(current && current.kind !== "idle" ? current : undefined);
 
   // Diagnostics: surface query errors + row/activity churn (VITE_JAZZ_DEBUG=1).
   $effect(() => {
