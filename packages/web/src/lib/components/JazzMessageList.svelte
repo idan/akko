@@ -39,7 +39,6 @@
 </script>
 
 <div class="messages" bind:this={container}>
-  <p class="jazz-note">Projected read model (Jazz messages table)</p>
   {#each rows.current ?? [] as m (m.id)}
     <div class="msg {m.role}">
       <div class="bubble">{m.text}</div>
@@ -62,6 +61,6 @@
     </div>
   {/if}
   {#if (rows.current ?? []).length === 0 && !live}
-    <p class="empty">No projected messages yet.</p>
+    <p class="empty">No messages yet.</p>
   {/if}
 </div>

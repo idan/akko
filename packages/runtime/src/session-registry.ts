@@ -16,6 +16,7 @@ import {
   type Command,
   type ConversationStore,
   type Decision,
+  type EntrySink,
   type EventBus,
   type ModelCatalogEntry,
   type PrincipalId,
@@ -48,6 +49,25 @@ export interface AkkoSessionRegistryDeps {
   projector?: SessionProjector;
   /** This node's id, stamped onto `SessionRef.hostNode`. */
   nodeId?: string;
+}
+
+/**
+ * Index bookkeeping run as an entry sink: keep `updatedAt` fresh as a conversation grows
+ * and refresh the projected session row, so a reactive session list orders by real
+ * recency (doc 14). Separate from the projector because it is index work, not projection.
+ */
+export function createSessionTouchSink(deps: {
+  sessionId: SessionId;
+  index: SessionIndex;
+  projector?: SessionProjector;
+}): EntrySink {
+  return {
+    onEntry: async () => {
+      deps.index.touch(deps.sessionId, Date.now());
+      const cur = deps.index.getRef(deps.sessionId);
+      if (cur) deps.projector?.projectSessionMeta?.(cur);
+    },
+  };
 }
 
 export class AkkoSessionRegistry implements SessionRegistry {
@@ -211,13 +231,14 @@ export class AkkoSessionRegistry implements SessionRegistry {
   ): AkkoSessionRuntime {
     const projector = this.#deps.projector;
     if (projector) projector.ensureSession(ref);
+    const touchSink = createSessionTouchSink({ sessionId: ref.id, index: this.#index, projector });
     const runtime = new AkkoSessionRuntime({
       ref,
       driver: session,
       eventBus: this.#deps.eventBus,
       conversationStore: this.#deps.conversationStore,
       persistedCount,
-      entrySinks: projector ? [projector] : [],
+      entrySinks: projector ? [projector, touchSink] : [touchSink],
       resolveModel: (input) => this.#router.resolveModelString(input, modelRuntime),
       onModelChanged: (modelId) => {
         const cur = this.#index.getRef(ref.id);

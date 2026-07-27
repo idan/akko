@@ -27,8 +27,6 @@ export class AkkoClient {
   models = $state<ModelCatalogEntry[]>([]);
   activeSessionId = $state<string | null>(null);
   conversations = $state<Record<string, ConversationState>>({});
-  /** Jazz projection CoValue id per session (doc 14), when the backend projector is on. */
-  jazzIds = $state<Record<string, string>>({});
 
   #ws?: WebSocket;
   #subscribed = new Set<string>();
@@ -45,20 +43,9 @@ export class AkkoClient {
     return (id && this.conversations[id]) || emptyConversation();
   }
 
-  get activeJazzId(): string | undefined {
-    const id = this.activeSessionId;
-    return id ? this.jazzIds[id] : undefined;
-  }
-
   get activeSession(): SessionSummary | undefined {
     const id = this.activeSessionId;
     return id ? this.sessions.find((s) => s.id === id) : undefined;
-  }
-
-  #rememberJazz(refs: SessionSummary[]): void {
-    const next = { ...this.jazzIds };
-    for (const r of refs) if (r.jazzId) next[r.id] = r.jazzId;
-    this.jazzIds = next;
   }
 
   connect(): void {
@@ -119,7 +106,6 @@ export class AkkoClient {
     });
     const data = (await res.json()) as { sessions: SessionSummary[] };
     this.sessions = data.sessions;
-    this.#rememberJazz(data.sessions);
   }
 
   /** Load the available models for the workspace (doc 05) — powers the header picker. */
@@ -148,7 +134,6 @@ export class AkkoClient {
     });
     const data = (await res.json()) as { ref: SessionSummary };
     this.sessions = [data.ref, ...this.sessions];
-    this.#rememberJazz([data.ref]);
     this.select(data.ref.id);
   }
 

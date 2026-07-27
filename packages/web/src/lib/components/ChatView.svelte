@@ -1,6 +1,5 @@
 <script lang="ts">
   import type { AkkoClient } from "../client.svelte.ts";
-  import { JAZZ_ENABLED } from "../config.ts";
   import MessageList from "./MessageList.svelte";
   import JazzMessageList from "./JazzMessageList.svelte";
   import Composer from "./Composer.svelte";
@@ -8,6 +7,7 @@
   let { client, onmenu, jazzReady = false, session = undefined }: {
     client: AkkoClient;
     onmenu: () => void;
+    /** True when a Jazz provider is mounted — then the read model is THE view (doc 15). */
     jazzReady?: boolean;
     /** Session metadata from the read model. Falls back to the WS client's copy. */
     session?: { title?: string; model?: string };
@@ -16,12 +16,6 @@
   // Prefer the projected row: `client.sessions` only holds what this tab fetched over
   // HTTP, so a session created in another tab is missing from it (doc 14).
   const active = $derived(session ?? client.sessions.find((s) => s.id === client.activeSessionId));
-  // The Jazz view queries by sessionId directly, so offer the toggle for any active
-  // session once the Jazz client has resolved (a `JazzSvelteProvider` ancestor exists).
-  const showJazz = $derived(JAZZ_ENABLED && jazzReady && !!client.activeSessionId);
-
-  // "live" = WS stream (token-by-token). "jazz" = projected read model (finalized).
-  let view = $state<"live" | "jazz">("live");
 
   function onModelChange(e: Event) {
     const value = (e.currentTarget as HTMLSelectElement).value;
@@ -41,16 +35,12 @@
         {/each}
       </select>
     {/if}
-    {#if client.activeSessionId && showJazz}
-      <div class="seg">
-        <button class:on={view === "live"} onclick={() => (view = "live")}>Live</button>
-        <button class:on={view === "jazz"} onclick={() => (view = "jazz")}>Jazz</button>
-      </div>
-    {/if}
   </header>
 
   {#if client.activeSessionId}
-    {#if view === "jazz" && showJazz}
+    <!-- Jazz is the read model when a provider is mounted; the WS reducer view is the
+         fallback for the no-Jazz setup (doc 15, unify step 2). -->
+    {#if jazzReady}
       <JazzMessageList sessionId={client.activeSessionId} />
     {:else}
       <MessageList conversation={client.activeConversation} />

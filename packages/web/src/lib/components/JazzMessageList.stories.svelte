@@ -12,14 +12,14 @@
 </script>
 
 <!--
-  Rows come from the mocked @akko/schema fixtures keyed by sessionId
-  (see .storybook/mocks/schema.ts): `sess_demo` is populated, anything else is empty.
+  The Jazz read model is the primary message view (doc 15, unify step 2). Rows come from
+  the mocked @akko/schema fixtures keyed by sessionId (see .storybook/mocks/schema.ts):
+  `sess_demo` is populated, anything else is empty.
   The `play` function turns this story into an addon-vitest browser test.
 -->
 <Story
   name="Projected"
   play={async ({ canvas }) => {
-    await expect(canvas.findByText(/Projected read model/)).resolves.toBeInTheDocument();
     await expect(canvas.findByText(/never projected/)).resolves.toBeInTheDocument();
   }}
 >
@@ -33,7 +33,7 @@
 <Story
   name="Empty"
   play={async ({ canvas }) => {
-    await expect(canvas.findByText(/No projected messages yet/)).resolves.toBeInTheDocument();
+    await expect(canvas.findByText(/No messages yet/)).resolves.toBeInTheDocument();
   }}
 >
   {#snippet template()}

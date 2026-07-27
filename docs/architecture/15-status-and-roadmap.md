@@ -201,14 +201,21 @@ retiring ~800 lines of read-path machinery (`conversation.ts`, `client.svelte.ts
    this process touched); `setModel` re-projects the ref. `SessionList` is now
    presentational, fed by `JazzSessionList` (a `QuerySubscription` *inside* the provider)
    or the WS client.
-2. **Make Jazz the default read path**, drop the Live/Jazz toggle. Keep the WS running but
-   unused for reads — a free safety net while living on it. Fold in: `SessionIndex.touch()`
-   is never called, so `updatedAt` only moves on create/model-change (sessions don't float
-   to the top when messaged); and session **rename** has no command yet.
+2. ~~**Make Jazz the default read path**, drop the Live/Jazz toggle~~ — **done.** With a
+   Jazz provider mounted, `JazzMessageList` *is* the message view (no toggle, no
+   "projected read model" banner); the WS reducer view remains the fallback for the
+   no-Jazz setup (`bun run dev`), so the socket is still a free safety net. Also folded
+   in: `SessionIndex.touch()` now runs as an entry sink (`createSessionTouchSink`), so
+   `updatedAt` tracks real activity and the reactive list orders by recency; and the
+   vestigial per-session `jazzId` plumbing was dropped from the client (the read model is
+   queried by `sessionId`). *Still deferred:* session **rename** — the `rename` verb
+   exists in `CommandVerb` but has no implementation or UI; it is a write feature, not a
+   read-path concern.
 3. **Move commands to HTTP**, delete the WS + reducer + event folding. The `● connected`
    indicator becomes Jazz's connection state. Least reversible — before doing it, measure:
    two tabs on one session, a throttled network, and rows/sec written per turn (write
-   amplification at the 40ms flush).
+   amplification at the 40ms flush). The `jazzId` field on `SessionSummary` and
+   `projectionId()` on the projector are vestigial and go with this step.
 4. **Presence/typing + per-message attribution** — cheap once everything is a Jazz table
    (the history endpoint already returns `authorId`).
 

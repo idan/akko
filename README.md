@@ -112,7 +112,8 @@ JAZZ_SYNC=http://localhost:4200 \
 
 # 3) frontend: renders from the Jazz read model (opt-in)
 VITE_JAZZ=1 bun run dev:web
-# in the chat header, toggle "Live" <-> "Jazz"
+# with VITE_JAZZ=1 the read model IS the view (no toggle); without it the app
+# renders from the WebSocket reducer instead
 #
 # verbose diagnostics (fish/bash): AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev:jazz
 # inspect the sync server:          bun run jazz:probe <sessionId> [jwt]

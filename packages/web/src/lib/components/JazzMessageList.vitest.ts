@@ -47,14 +47,13 @@ describe("JazzMessageList", () => {
     expect(screen.getByText("hello back")).toBeInTheDocument();
     expect(container.querySelector(".msg.user")).not.toBeNull();
     expect(container.querySelector(".msg.assistant")).not.toBeNull();
-    expect(screen.getByText(/Projected read model/)).toBeInTheDocument();
   });
 
   test("shows the empty state when there are no rows", () => {
     messageRows.current = [];
     activityRows.current = [];
     render(JazzMessageList, { sessionId: "s1" });
-    expect(screen.getByText("No projected messages yet.")).toBeInTheDocument();
+    expect(screen.getByText("No messages yet.")).toBeInTheDocument();
   });
 
   test("renders the live streaming bubble from the activity row", () => {

@@ -49,7 +49,7 @@ describe("AkkoClient", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => ({
-        json: async () => ({ sessions: [{ id: "s1", title: "One", jazzId: "co_z1" }] }),
+        json: async () => ({ sessions: [{ id: "s1", title: "One" }] }),
       })) as unknown as typeof fetch,
     );
 
@@ -57,7 +57,6 @@ describe("AkkoClient", () => {
 
     expect(client.sessions).toHaveLength(1);
     expect(client.sessions[0]!.title).toBe("One");
-    expect(client.jazzIds["s1"]).toBe("co_z1");
     expect(fetch).toHaveBeenCalledWith(
       "/api/sessions?workspaceId=wsp_test",
       expect.objectContaining({ credentials: "include" }),

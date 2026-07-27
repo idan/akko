@@ -11,7 +11,7 @@ import { InMemoryEventBus } from "../src/event-bus.ts";
 import { InMemoryConversationStore } from "../src/conversation-store.ts";
 import { InMemorySessionIndex } from "../src/session-index.ts";
 import { HostWorkspaceRuntimeFactory } from "../src/workspace-runtime.ts";
-import { AkkoSessionRegistry } from "../src/session-registry.ts";
+import { AkkoSessionRegistry, createSessionTouchSink } from "../src/session-registry.ts";
 import type { SessionProjector } from "../src/session-projector.ts";
 import { newPrincipalId, newWorkspaceId } from "../src/ids.ts";
 
@@ -76,5 +76,25 @@ describe("registry read-model projection", () => {
     expect(projector.meta.sort()).toEqual(["ses_old1", "ses_old2"]);
     // Metadata only — no history backfill / live subscription for untouched sessions.
     expect(projector.ensured).toEqual([]);
+  });
+
+  test("committing an entry touches updatedAt and re-projects, so the list orders by recency", async () => {
+    const index = new InMemorySessionIndex();
+    const sessionId = "ses_touch" as SessionId;
+    index.upsertRef({
+      id: sessionId,
+      workspaceId: newWorkspaceId(),
+      ownerId: newPrincipalId(),
+      kind: "conversation",
+      createdAt: 1,
+      updatedAt: 1, // stale
+    });
+    const projector = new SpyProjector();
+    const sink = createSessionTouchSink({ sessionId, index, projector });
+
+    await sink.onEntry(sessionId, { id: "e1" as never, parentId: null, entry: {}, ts: 1 });
+
+    expect(index.getRef(sessionId)!.updatedAt).toBeGreaterThan(1);
+    expect(projector.meta).toEqual([sessionId]); // row refreshed for the reactive list
   });
 });
