@@ -153,7 +153,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
 
   /** Canonical conversation history for a session, read straight from the store. */
   async getEntries(sessionId: SessionId) {
-    if (!this.#index.getRef(sessionId)) throw new Error(`unknown session: ${sessionId}`);
+    const ref = this.#index.getRef(sessionId);
+    if (!ref) throw new Error(`unknown session: ${sessionId}`);
+    // Reading history is also the moment a client is about to render this session, so
+    // make sure the read-model projection exists for it (cheap; backfills once). Without
+    // this, selecting a session that isn't live leaves the projection empty (doc 14).
+    this.#deps.projector?.ensureSession(ref);
     return this.#deps.conversationStore.getEntries(sessionId);
   }
 

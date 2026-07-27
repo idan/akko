@@ -64,3 +64,15 @@ export async function getJazzToken(): Promise<string | null> {
   const data = (await res.json()) as { token?: string };
   return data.token ?? null;
 }
+
+/** Decode a JWT payload (no verification) — diagnostics only. */
+export function decodeJwtPayload(token: string): unknown {
+  try {
+    const part = token.split(".")[1];
+    if (!part) return null;
+    const json = atob(part.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}

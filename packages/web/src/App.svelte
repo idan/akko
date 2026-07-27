@@ -3,7 +3,7 @@
   import { createJazzClient, JazzSvelteProvider, type JazzClient } from "jazz-tools/svelte";
   import { AkkoClient } from "./lib/client.svelte.ts";
   import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
-  import { currentUser, signOut, getJazzToken, type AuthedUser } from "./lib/auth-client.ts";
+  import { currentUser, signOut, getJazzToken, decodeJwtPayload, type AuthedUser } from "./lib/auth-client.ts";
   import SessionList from "./lib/components/SessionList.svelte";
   import ChatView from "./lib/components/ChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
@@ -33,8 +33,9 @@
             return;
           }
           if (JAZZ_DEBUG) console.log("[jazz] connecting to", JAZZ_SYNC, "app", JAZZ_APP_ID);
+          if (JAZZ_DEBUG) console.log("[jazz] token payload:", JSON.stringify(decodeJwtPayload(jwtToken)));
           const client = await createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
-          if (JAZZ_DEBUG) console.log("[jazz] connected; session", client.session);
+          if (JAZZ_DEBUG) console.log("[jazz] connected; session:", JSON.stringify(client.session));
           jazzClient = client;
         } catch (err) {
           console.error("[jazz] client unavailable (core app unaffected):", err);
