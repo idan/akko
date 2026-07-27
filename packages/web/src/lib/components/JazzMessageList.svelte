@@ -7,8 +7,9 @@
 
   // Two reactive queries (doc 08): finalized messages + the ephemeral live `activity`
   // (in-flight user prompt, thinking, streaming). Rendering both makes the Jazz view
-  // feel as live as the WS.
-  const rows = new QuerySubscription(() => app.messages.where({ sessionId }));
+  // feel as live as the WS. Messages are ordered by `createdAt` — row ids are
+  // content-derived (not insertion-ordered), so ordering must be explicit.
+  const rows = new QuerySubscription(() => app.messages.where({ sessionId }).orderBy("createdAt"));
   const activity = new QuerySubscription(() => app.activity.where({ sessionId }));
 
   let container: HTMLDivElement | undefined = $state();

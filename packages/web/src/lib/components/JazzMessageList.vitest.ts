@@ -22,12 +22,15 @@ vi.mock("jazz-tools/svelte", () => ({
     error = null;
   },
 }));
-vi.mock("@akko/schema", () => ({
-  app: {
-    messages: { where: () => ({ __table: "messages" }) },
-    activity: { where: () => ({ __table: "activity" }) },
-  },
-}));
+vi.mock("@akko/schema", () => {
+  const q = (table: string) => ({ __table: table, orderBy: () => ({ __table: table }) });
+  return {
+    app: {
+      messages: { where: () => q("messages") },
+      activity: { where: () => q("activity") },
+    },
+  };
+});
 
 import JazzMessageList from "./JazzMessageList.svelte";
 

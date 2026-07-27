@@ -73,6 +73,9 @@ const { runMigrations } = await getMigrations(options);
 await runMigrations();
 console.log(`  auth:      Better Auth ready (passkeys) at ${webOrigin}/api/auth`);
 
+// Canonical conversation store (doc 04) — also the source the Jazz projector backfills from.
+const conversationStore = new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") });
+
 // Optional Jazz projection (doc 14): enabled when JAZZ_SYNC + app id + backend secret set.
 const workerConfig = workerConfigFromEnv();
 let projector: JazzProjector | undefined;
@@ -89,7 +92,10 @@ if (workerConfig) {
       });
       console.log(`  jazz:      deployed schema + policies to ${workerConfig.serverUrl}`);
     }
-    projector = new JazzProjector(createBackendDb(workerConfig), eventBus);
+    projector = new JazzProjector(createBackendDb(workerConfig), {
+      eventBus,
+      getEntries: (sessionId) => conversationStore.getEntries(sessionId),
+    });
     console.log(`  jazz:      projecting to ${workerConfig.serverUrl} (app ${workerConfig.appId})`);
   } catch (err) {
     projector = undefined;
@@ -101,7 +107,7 @@ if (workerConfig) {
 
 const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
-  conversationStore: new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") }),
+  conversationStore,
   sessionIndex: new SqliteSessionIndex(db),
   memberships,
   policy: new RoleBasedPolicy(),

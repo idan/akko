@@ -41,24 +41,44 @@ interface TurnState {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-/** Stable Jazz ObjectId (UUID form) for a session's single ephemeral `activity` row. */
-function activityId(sessionId: SessionId): string {
-  const h = createHash("sha256").update(`activity:${sessionId}`).digest("hex");
+export interface JazzProjectorDeps {
+  /** Live pi event stream — drives the ephemeral `activity` row. */
+  eventBus?: EventBus;
+  /**
+   * Canonical entries for a session, used to **backfill** the projection (doc 04: the
+   * read model must be recreatable from canonical storage). Without this, a session's
+   * history is missing from Jazz whenever the projection is lost — e.g. every restart of
+   * an `--in-memory` sync server, or a session rehydrated on a node that never saw it.
+   */
+  getEntries?: (sessionId: SessionId) => Promise<CommittedEntry[]>;
+}
+
+/** Stable Jazz ObjectId (UUID form) from arbitrary key material. */
+function stableId(key: string): string {
+  const h = createHash("sha256").update(key).digest("hex");
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20, 32)}`;
 }
+
+const activityId = (sessionId: SessionId): string => stableId(`activity:${sessionId}`);
+/** Deterministic row id per canonical entry — makes projection idempotent (upsert-safe). */
+const messageRowId = (sessionId: SessionId, entryId: string): string =>
+  stableId(`message:${sessionId}:${entryId}`);
 
 export class JazzProjector implements SessionProjector {
   readonly #db: Db;
   readonly #eventBus?: EventBus;
+  readonly #getEntries?: (sessionId: SessionId) => Promise<CommittedEntry[]>;
   #projected = new Set<SessionId>();
   #workspaceOf = new Map<SessionId, string>();
   #subs = new Map<SessionId, () => void>();
   #turn = new Map<SessionId, TurnState>();
   #active = new Set<SessionId>();
+  #backfilled = new Set<SessionId>();
 
-  constructor(db: Db, eventBus?: EventBus) {
+  constructor(db: Db, deps: JazzProjectorDeps = {}) {
     this.#db = db;
-    this.#eventBus = eventBus;
+    this.#eventBus = deps.eventBus;
+    this.#getEntries = deps.getEntries;
   }
 
   ensureSession(ref: SessionRef): string {
@@ -71,6 +91,12 @@ export class JazzProjector implements SessionProjector {
       );
       debug("subscribed", ref.id, "workspace", ref.workspaceId);
     }
+    // Backfill canonical history once per session, so the Jazz view shows prior messages
+    // (the projection is otherwise only built forward from live entries).
+    if (!this.#backfilled.has(ref.id)) {
+      this.#backfilled.add(ref.id);
+      void this.rebuild(ref.id);
+    }
     return ref.id;
   }
 
@@ -79,23 +105,34 @@ export class JazzProjector implements SessionProjector {
   }
 
   async onEntry(sessionId: SessionId, entry: CommittedEntry): Promise<void> {
+    const projected = this.#projectEntry(sessionId, entry);
+    // The finalized assistant message now lives in `messages`; retire the live bubble.
+    if (projected === "assistant") this.#clearActivity(sessionId);
+  }
+
+  /** Upsert one canonical entry as a `messages` row. Returns the role, or undefined if skipped. */
+  #projectEntry(sessionId: SessionId, entry: CommittedEntry): "user" | "assistant" | undefined {
     const message = entry.entry as { role?: string; content?: unknown };
-    if (message.role !== "user" && message.role !== "assistant") return;
+    if (message.role !== "user" && message.role !== "assistant") return undefined;
     try {
-      this.#db.insert(app.messages, {
-        sessionId,
-        workspaceId: this.#workspaceOf.get(sessionId) ?? "",
-        role: message.role,
-        text: textOfContent(message.content),
-        createdAt: new Date(entry.ts),
-        authorId: entry.actorId ?? "",
-      });
-      debug("message row", sessionId, message.role, `"${textOfContent(message.content).slice(0, 40)}"`);
+      // Deterministic id keyed on the canonical entry => idempotent, so re-projecting
+      // (backfill after a projection loss) can never duplicate rows.
+      this.#db.upsert(
+        app.messages,
+        {
+          sessionId,
+          workspaceId: this.#workspaceOf.get(sessionId) ?? "",
+          role: message.role,
+          text: textOfContent(message.content),
+          createdAt: new Date(entry.ts),
+          authorId: entry.actorId ?? "",
+        },
+        { id: messageRowId(sessionId, entry.id) },
+      );
     } catch (error) {
       console.error(`[jazz] failed to project message for ${sessionId}:`, error);
     }
-    // The finalized assistant message now lives in `messages`; retire the live bubble.
-    if (message.role === "assistant") this.#clearActivity(sessionId);
+    return message.role;
   }
 
   /** Derive the ephemeral `activity` row from the live pi event stream. Never throws. */
@@ -184,8 +221,22 @@ export class JazzProjector implements SessionProjector {
     }
   }
 
-  async rebuild(_sessionId: SessionId): Promise<void> {
-    // Slice: projection is built forward from live entries. Rebuild-from-store is later.
+  /**
+   * Rebuild the projection for a session from canonical storage (doc 04). Idempotent:
+   * rows are keyed by a deterministic id per entry, so this can run any time — on first
+   * sight of a session, after a projection loss (e.g. an in-memory sync server restart),
+   * or when a session is rehydrated on a node that never projected it.
+   */
+  async rebuild(sessionId: SessionId): Promise<void> {
+    if (!this.#getEntries) return;
+    try {
+      const entries = await this.#getEntries(sessionId);
+      let n = 0;
+      for (const entry of entries) if (this.#projectEntry(sessionId, entry)) n++;
+      if (n > 0) debug("backfilled", sessionId, `${n} message(s)`);
+    } catch (error) {
+      console.error(`[jazz] failed to rebuild projection for ${sessionId}:`, error);
+    }
   }
 
   async drop(sessionId: SessionId): Promise<void> {
@@ -194,5 +245,6 @@ export class JazzProjector implements SessionProjector {
     this.#clearActivity(sessionId);
     this.#projected.delete(sessionId);
     this.#workspaceOf.delete(sessionId);
+    this.#backfilled.delete(sessionId);
   }
 }

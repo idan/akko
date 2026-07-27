@@ -39,8 +39,8 @@ function ref(id: string, title: string): SessionRef {
     updatedAt: 0,
   };
 }
-function entry(id: string, msg: unknown, actorId?: string): CommittedEntry {
-  return { id: id as EntryId, parentId: null, entry: msg, actorId: actorId as PrincipalId | undefined, ts: 1 };
+function entry(id: string, msg: unknown, actorId?: string, ts = 1): CommittedEntry {
+  return { id: id as EntryId, parentId: null, entry: msg, actorId: actorId as PrincipalId | undefined, ts };
 }
 const userMsg = (text: string) => ({ role: "user", content: text });
 const assistantMsg = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
@@ -53,12 +53,15 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
     expect(projector.projectionId(r.id)).toBe("ses_p1");
 
     await projector.onEntry(r.id, entry("e1", userMsg("my name is Ada"), "prn_alice"));
-    await projector.onEntry(r.id, entry("e2", assistantMsg("Hi Ada")));
+    await projector.onEntry(r.id, entry("e2", assistantMsg("Hi Ada"), undefined, 2));
 
     const rows = await db.all(app.messages.where({ sessionId: "ses_p1" }));
-    expect(rows.map((m) => `${m.role}:${m.text}`)).toEqual(["user:my name is Ada", "assistant:Hi Ada"]);
-    expect(rows[0]?.authorId).toBe("prn_alice");
-    expect(rows[1]?.authorId).toBe("");
+    // Row ids are content-derived, so storage order is arbitrary — the UI orders by
+    // `createdAt` (see JazzMessageList). Assert on the chronologically-ordered view.
+    const ordered = [...rows].sort((a, b) => Number(new Date(a.createdAt)) - Number(new Date(b.createdAt)));
+    expect(ordered.map((m) => `${m.role}:${m.text}`)).toEqual(["user:my name is Ada", "assistant:Hi Ada"]);
+    expect(ordered[0]?.authorId).toBe("prn_alice");
+    expect(ordered[1]?.authorId).toBe("");
     // Read-ACL key: every projected row carries the session's workspace (doc 16).
     expect(rows.every((m) => m.workspaceId === "wsp_1")).toBe(true);
   });
@@ -70,6 +73,33 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
 
     const rows = await db.all(app.messages.where({ sessionId: "ses_p2" }));
     expect(rows.length).toBe(0);
+  });
+
+  test("backfills canonical history on ensureSession, idempotently (doc 04 recreatable)", async () => {
+    // Canonical history exists (e.g. in SQLite) but was never projected — exactly the
+    // state after an --in-memory sync server restart, or a session rehydrated elsewhere.
+    const canonical: CommittedEntry[] = [
+      entry("c1", userMsg("first question"), "prn_alice"),
+      entry("c2", assistantMsg("first answer")),
+      entry("c3", { role: "toolResult", content: "ignored" }),
+    ];
+    const projector = new JazzProjector(db, { getEntries: async () => canonical });
+    const r = ref("ses_backfill", "Backfill");
+
+    projector.ensureSession(r); // triggers the one-time backfill
+    let rows: Array<{ text?: string; workspaceId?: string; authorId?: string }> = [];
+    for (let i = 0; i < 25 && rows.length < 2; i++) {
+      rows = await db.all(app.messages.where({ sessionId: "ses_backfill" }));
+      if (rows.length < 2) await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows.map((m) => m.text).sort()).toEqual(["first answer", "first question"]);
+    expect(rows.every((m) => m.workspaceId === "wsp_1")).toBe(true); // ACL key is stamped
+
+    // Rebuilding again must not duplicate (deterministic per-entry row ids).
+    await projector.rebuild(r.id);
+    await projector.rebuild(r.id);
+    const after = await db.all(app.messages.where({ sessionId: "ses_backfill" }));
+    expect(after).toHaveLength(2);
   });
 });
 
@@ -93,7 +123,7 @@ describe("JazzProjector live activity (thinking + streaming)", () => {
 
   test("streams the assistant text (with the in-flight user prompt), cleared on finalize", async () => {
     const bus = new InMemoryEventBus();
-    const projector = new JazzProjector(db, bus);
+    const projector = new JazzProjector(db, { eventBus: bus });
     const r = ref("ses_act1", "Act");
     projector.ensureSession(r);
 
@@ -117,7 +147,7 @@ describe("JazzProjector live activity (thinking + streaming)", () => {
 
   test("a thinking-only turn shows the prompt, then clears on turn_end", async () => {
     const bus = new InMemoryEventBus();
-    const projector = new JazzProjector(db, bus);
+    const projector = new JazzProjector(db, { eventBus: bus });
     const r = ref("ses_act2", "Act2");
     projector.ensureSession(r);
 

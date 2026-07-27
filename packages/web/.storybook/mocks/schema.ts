@@ -36,9 +36,15 @@ const ACTIVITY: Record<string, ActivityRow[]> = {};
 
 export const app = {
   messages: {
-    where: ({ sessionId }: { sessionId: string }) => ({ __rows: FIXTURES[sessionId] ?? [] }),
+    where: ({ sessionId }: { sessionId: string }) => {
+      const rows = FIXTURES[sessionId] ?? [];
+      return { __rows: rows, orderBy: () => ({ __rows: rows }) };
+    },
   },
   activity: {
-    where: ({ sessionId }: { sessionId: string }) => ({ __rows: ACTIVITY[sessionId] ?? [] }),
+    where: ({ sessionId }: { sessionId: string }) => {
+      const rows = ACTIVITY[sessionId] ?? [];
+      return { __rows: rows, orderBy: () => ({ __rows: rows }) };
+    },
   },
 };

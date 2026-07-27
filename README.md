@@ -51,9 +51,10 @@ individual processes are still available if you want separate terminals:
 
 > **After any `@akko/schema` change, fully restart `dev:jazz`** (Ctrl-C, rerun). The
 > in-memory sync server keeps its old schema catalogue and `dev:server` doesn't
-> auto-restart, so a stale catalogue makes the browser client hit `CatalogueWriteDenied`
-> and the projected view goes empty. A full restart gives a fresh sync server + a
-> redeploy (doc 14).
+> auto-restart (doc 14). Note the Jazz store is disposable: a restart wipes all projected
+> rows, and the projector **backfills** a session's history from canonical SQLite when it
+> first sees the session. A `CatalogueWriteDenied` warning in the browser console is
+> expected and benign (the browser can't write the admin-owned schema catalogue).
 
 Design components in isolation (optional, separate dev server):
 
