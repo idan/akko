@@ -47,4 +47,7 @@ export const app = {
       return { __rows: rows, orderBy: () => ({ __rows: rows }) };
     },
   },
+  sessions: {
+    where: () => ({ __rows: [], orderBy: () => ({ __rows: [] }) }),
+  },
 };

@@ -5,6 +5,7 @@
   import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
   import { currentUser, signOut, getJazzToken, decodeJwtPayload, type AuthedUser } from "./lib/auth-client.ts";
   import SessionList from "./lib/components/SessionList.svelte";
+  import JazzSessionList from "./lib/components/JazzSessionList.svelte";
   import ChatView from "./lib/components/ChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
 
@@ -97,7 +98,24 @@
   <div class="app" class:sidebar-open={sidebarOpen}>
     <aside class="sidebar">
       <div class="list-wrap">
-        <SessionList client={c} onselect={selectSession} oncreate={() => void c.createSession()} />
+        {#if jazzClient}
+          <!-- Session list straight off the Jazz read model: live across tabs/devices. -->
+          <JazzSessionList
+            workspaceId={WORKSPACE}
+            activeId={c.activeSessionId}
+            connected={c.connected}
+            onselect={selectSession}
+            oncreate={() => void c.createSession()}
+          />
+        {:else}
+          <SessionList
+            sessions={c.sessions}
+            activeId={c.activeSessionId}
+            connected={c.connected}
+            onselect={selectSession}
+            oncreate={() => void c.createSession()}
+          />
+        {/if}
       </div>
       <div class="account">
         <span class="who" title={user?.email}>{user?.name}</span>

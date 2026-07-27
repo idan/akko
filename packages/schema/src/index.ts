@@ -24,6 +24,24 @@ export const appSchema = {
     authorId: s.string(),
   }),
   /**
+   * Session metadata (doc 02) — the reactive session list. Mirrors `SessionRef` from our
+   * canonical index; one row per session, keyed by a derived id so it is upsert-safe.
+   * Projecting this is what makes the session list live across tabs, devices and members
+   * without any socket fan-out.
+   */
+  sessions: s.table({
+    sessionId: s.string(),
+    /** Workspace that owns the session — the read-ACL key (doc 16). */
+    workspaceId: s.string(),
+    ownerId: s.string(),
+    kind: s.string(),
+    title: s.string(),
+    /** Resolved `provider/id` for the session's model (doc 05); "" when unset. */
+    model: s.string(),
+    createdAt: s.timestamp(),
+    updatedAt: s.timestamp(),
+  }),
+  /**
    * Ephemeral live state (doc 08): the assistant's in-flight turn — "thinking" before it
    * streams, then "streaming" with a growing `text`. Exactly one row per session (id =
    * `act_<sessionId>`), upserted during a turn and deleted when the finalized message
@@ -63,6 +81,8 @@ export const permissions = s.definePermissions(app, (ctx: any) => {
   const workspace = ctx.session["claims.workspaceId"];
   ctx.policy.messages.allowRead.where({ workspaceId: workspace });
   ctx.policy.messages.allowInsert.never();
+  ctx.policy.sessions.allowRead.where({ workspaceId: workspace });
+  ctx.policy.sessions.allowInsert.never();
   ctx.policy.activity.allowRead.where({ workspaceId: workspace });
   ctx.policy.activity.allowInsert.never();
 });

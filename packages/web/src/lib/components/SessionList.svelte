@@ -1,9 +1,16 @@
 <script lang="ts">
   import { Button } from "bits-ui";
-  import type { AkkoClient } from "../client.svelte.ts";
 
-  let { client, onselect, oncreate }: {
-    client: AkkoClient;
+  /** Minimal shape the list renders — satisfied by both the WS client and Jazz rows. */
+  export interface SessionListItem {
+    id: string;
+    title?: string;
+  }
+
+  let { sessions, activeId = null, connected = false, onselect, oncreate }: {
+    sessions: SessionListItem[];
+    activeId?: string | null;
+    connected?: boolean;
     onselect: (id: string) => void;
     oncreate: () => void;
   } = $props();
@@ -16,19 +23,15 @@
   </header>
   <hr class="sep" />
   <nav class="sessions">
-    {#each client.sessions as s (s.id)}
-      <button
-        class="session"
-        class:active={client.activeSessionId === s.id}
-        onclick={() => onselect(s.id)}
-      >
+    {#each sessions as s (s.id)}
+      <button class="session" class:active={activeId === s.id} onclick={() => onselect(s.id)}>
         {s.title ?? "Untitled"}
       </button>
     {:else}
       <p class="empty">No sessions yet</p>
     {/each}
   </nav>
-  <footer class="status" class:online={client.connected}>
-    {client.connected ? "● connected" : "○ offline"}
+  <footer class="status" class:online={connected}>
+    {connected ? "● connected" : "○ offline"}
   </footer>
 </div>

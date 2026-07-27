@@ -214,7 +214,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
       resolveModel: (input) => this.#router.resolveModelString(input, modelRuntime),
       onModelChanged: (modelId) => {
         const cur = this.#index.getRef(ref.id);
-        if (cur) this.#index.upsertRef({ ...cur, model: modelId, updatedAt: Date.now() });
+        if (!cur) return;
+        const next = { ...cur, model: modelId, updatedAt: Date.now() };
+        this.#index.upsertRef(next);
+        // Refresh the projected session row so the reactive session list picks up the
+        // new model without a socket patch (doc 14).
+        this.#deps.projector?.ensureSession(next);
       },
     });
     const mailbox = new AkkoMailbox({

@@ -135,5 +135,12 @@ describe("standalone-server integration (worker deploy + backend Db + projector)
     expect(rows.every((m) => m.workspaceId === "wsp_dev")).toBe(true);
     expect(rows[0]?.authorId).toBe("prn_owner");
     expect(rows[1]?.authorId).toBe("");
+
+    // The session metadata row must reach the SAME separate reader (doc 02): this is what
+    // makes the session list reactive across tabs/devices without socket fan-out.
+    const sessionRows = await poll(() => readerDb.all(app.sessions.where({ sessionId: "ses_int1" })));
+    expect(sessionRows).toHaveLength(1);
+    expect(sessionRows[0]?.workspaceId).toBe("wsp_dev");
+    expect(sessionRows[0]?.ownerId).toBe("prn_owner");
   });
 });

@@ -65,6 +65,7 @@ function stableId(key: string): string {
 }
 
 const activityId = (sessionId: SessionId): string => stableId(`activity:${sessionId}`);
+const sessionRowId = (sessionId: SessionId): string => stableId(`session:${sessionId}`);
 /** Deterministic row id per canonical entry — makes projection idempotent (upsert-safe). */
 const messageRowId = (sessionId: SessionId, entryId: string): string =>
   stableId(`message:${sessionId}:${entryId}`);
@@ -89,6 +90,10 @@ export class JazzProjector implements SessionProjector {
   ensureSession(ref: SessionRef): string {
     this.#projected.add(ref.id);
     this.#workspaceOf.set(ref.id, ref.workspaceId);
+    // Project the session row itself (doc 02) so the session list is reactive across
+    // tabs/devices/members. Upsert-safe + never deleted, so this is cheap to re-run and
+    // doubles as the "metadata changed" refresh (e.g. after setModel).
+    this.#projectSession(ref);
     if (this.#eventBus && !this.#subs.has(ref.id)) {
       this.#subs.set(
         ref.id,
@@ -107,6 +112,29 @@ export class JazzProjector implements SessionProjector {
 
   projectionId(sessionId: SessionId): string | undefined {
     return this.#projected.has(sessionId) ? sessionId : undefined;
+  }
+
+  /** Upsert the session's metadata row. Never deleted (Jazz deletes tombstone the id). */
+  #projectSession(ref: SessionRef): void {
+    try {
+      this.#db.upsert(
+        app.sessions,
+        {
+          sessionId: ref.id,
+          workspaceId: ref.workspaceId,
+          ownerId: ref.ownerId,
+          kind: ref.kind,
+          title: ref.title ?? "",
+          model: ref.model ?? "",
+          createdAt: new Date(ref.createdAt),
+          updatedAt: new Date(ref.updatedAt),
+        },
+        { id: sessionRowId(ref.id) },
+      );
+      debug("session row", ref.id, `title="${ref.title ?? ""}" model="${ref.model ?? ""}"`);
+    } catch (error) {
+      console.error(`[jazz] failed to project session ${ref.id}:`, error);
+    }
   }
 
   async onEntry(sessionId: SessionId, entry: CommittedEntry): Promise<void> {

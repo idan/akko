@@ -103,6 +103,38 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
   });
 });
 
+describe("JazzProjector session metadata (reactive session list)", () => {
+  test("projects the session row on ensureSession and refreshes it on metadata change", async () => {
+    const projector = new JazzProjector(db);
+    const r = { ...ref("ses_meta", "First title"), model: "anthropic/claude", ownerId: "prn_owner" as never };
+    projector.ensureSession(r);
+
+    const poll = async (want: (rows: any[]) => boolean) => {
+      let rows: any[] = [];
+      for (let i = 0; i < 25; i++) {
+        rows = await db.all(app.sessions.where({ sessionId: "ses_meta" }));
+        if (want(rows)) return rows;
+        await new Promise((res) => setTimeout(res, 80));
+      }
+      return rows;
+    };
+
+    const rows = await poll((x) => x.length > 0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.title).toBe("First title");
+    expect(rows[0]?.model).toBe("anthropic/claude");
+    expect(rows[0]?.workspaceId).toBe("wsp_1"); // read-ACL key
+    expect(rows[0]?.ownerId).toBe("prn_owner");
+
+    // A metadata change (e.g. setModel) re-projects the SAME row — no duplicates.
+    projector.ensureSession({ ...r, model: "openai/gpt", title: "Renamed", updatedAt: Date.now() });
+    const updated = await poll((x) => x[0]?.model === "openai/gpt");
+    expect(updated).toHaveLength(1);
+    expect(updated[0]?.model).toBe("openai/gpt");
+    expect(updated[0]?.title).toBe("Renamed");
+  });
+});
+
 describe("JazzProjector live activity (thinking + streaming)", () => {
   const emit = (bus: InMemoryEventBus, sessionId: string, event: unknown) =>
     bus.publish({ type: "pi", sessionId: sessionId as SessionId, event } as never);
