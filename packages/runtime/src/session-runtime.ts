@@ -183,8 +183,10 @@ export class AkkoSessionRuntime implements SessionRuntime {
       for (const sink of this.#entrySinks) {
         try {
           await sink.onEntry(this.ref.id, entry);
-        } catch {
-          // A projection failure must not break canonical capture (doc 04).
+        } catch (error) {
+          // A projection failure must not break canonical capture (doc 04) — but log it,
+          // don't swallow silently, so read-model bugs are diagnosable.
+          console.error(`[runtime] entry sink failed for ${this.ref.id}:`, error);
         }
       }
       this.#lastEntryId = id;

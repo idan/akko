@@ -35,6 +35,9 @@ export const appSchema = {
     workspaceId: s.string(),
     /** "thinking" | "streaming". */
     kind: s.string(),
+    /** The in-flight user prompt — shown immediately (canonical rows are only captured at
+     * turn end), so the sender's message doesn't wait for the assistant to finish. */
+    userText: s.string(),
     /** In-flight assistant text (empty while thinking). */
     text: s.string(),
     updatedAt: s.timestamp(),

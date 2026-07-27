@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { createJazzClient, JazzSvelteProvider, type JazzClient } from "jazz-tools/svelte";
   import { AkkoClient } from "./lib/client.svelte.ts";
-  import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC } from "./lib/config.ts";
+  import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
   import { currentUser, signOut, getJazzToken, type AuthedUser } from "./lib/auth-client.ts";
   import SessionList from "./lib/components/SessionList.svelte";
   import ChatView from "./lib/components/ChatView.svelte";
@@ -28,10 +28,16 @@
       void (async () => {
         try {
           const jwtToken = await getJazzToken();
-          if (!jwtToken) return;
-          jazzClient = await createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
+          if (!jwtToken) {
+            console.warn("[jazz] no token (not authenticated?) — read model disabled");
+            return;
+          }
+          if (JAZZ_DEBUG) console.log("[jazz] connecting to", JAZZ_SYNC, "app", JAZZ_APP_ID);
+          const client = await createJazzClient({ appId: JAZZ_APP_ID, serverUrl: JAZZ_SYNC, jwtToken });
+          if (JAZZ_DEBUG) console.log("[jazz] connected; session", client.session);
+          jazzClient = client;
         } catch (err) {
-          console.error("Jazz read model unavailable (core app unaffected):", err);
+          console.error("[jazz] client unavailable (core app unaffected):", err);
         }
       })();
     }

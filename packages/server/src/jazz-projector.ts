@@ -4,16 +4,16 @@
  * Two projections, from two feeds:
  *  - **`messages`** (finalized, source-recreatable): each committed entry (`onEntry`,
  *    fed by the runtime's entry sinks) becomes one row. Insert-only.
- *  - **`activity`** (ephemeral, disposable): the assistant's in-flight turn. Derived from
- *    the live pi event stream on the `EventBus` — a "thinking" row when a turn starts,
- *    then "streaming" with a throttled, growing `text`. Exactly one row per session
+ *  - **`activity`** (ephemeral, disposable): the in-flight turn. Derived from the live pi
+ *    event stream on the `EventBus` — the user's prompt (shown immediately, since
+ *    canonical entries are only captured at turn end), a "thinking" indicator, then a
+ *    "streaming" assistant bubble with throttled growing `text`. One row per session
  *    (`act_<sessionId>`), deleted when the finalized message lands in `messages`.
  *
- * This is what makes the Jazz view feel as live as the WS: the frontend renders finalized
- * `messages` plus the ephemeral `activity` (thinking indicator + streaming bubble). Jazz
- * is never the source of truth — canonical content is SQLite (doc 04). The projector is
- * just another subscriber to the same event stream the WS gateway consumes, which is the
- * shape we want if Jazz later becomes the *sole* read model.
+ * This is what makes the Jazz view feel as live as the WS. Jazz is never the source of
+ * truth — canonical content is SQLite (doc 04). Every Jazz write is wrapped so a
+ * projection failure can never propagate into the event bus / runtime; set
+ * `AKKO_JAZZ_DEBUG=1` for verbose tracing.
  */
 import type { Db } from "jazz-tools/backend";
 import { createHash } from "node:crypto";
@@ -21,17 +21,22 @@ import { app, textOfContent } from "@akko/schema";
 import type { CommittedEntry, DomainEvent, EventBus, SessionId, SessionRef } from "@akko/core";
 import type { SessionProjector } from "@akko/runtime";
 
-/** How often (ms) streamed text is flushed to the `activity` row — trades smoothness vs. write volume. */
-const STREAM_FLUSH_MS = 100;
+/** How often (ms) streamed text is flushed to the `activity` row — smoothness vs. write volume. */
+const STREAM_FLUSH_MS = 40;
 
-/** The subset of a pi streaming event this projector reads (kept loose to avoid pi type coupling). */
+const DEBUG = process.env.AKKO_JAZZ_DEBUG === "1";
+const debug = (...args: unknown[]): void => {
+  if (DEBUG) console.log("[jazz]", ...args);
+};
+
 interface PiEvent {
   type: string;
   message?: { role?: string; content?: unknown };
   assistantMessageEvent?: { type: string; delta?: string };
 }
 
-interface StreamState {
+interface TurnState {
+  userText: string;
   text: string;
   timer?: ReturnType<typeof setTimeout>;
 }
@@ -48,15 +53,14 @@ export class JazzProjector implements SessionProjector {
   #projected = new Set<SessionId>();
   #workspaceOf = new Map<SessionId, string>();
   #subs = new Map<SessionId, () => void>();
-  #stream = new Map<SessionId, StreamState>();
-  #active = new Set<SessionId>(); // sessions with a live `activity` row
+  #turn = new Map<SessionId, TurnState>();
+  #active = new Set<SessionId>();
 
   constructor(db: Db, eventBus?: EventBus) {
     this.#db = db;
     this.#eventBus = eventBus;
   }
 
-  /** Mark a session projected; subscribe to its live event stream for `activity`. */
   ensureSession(ref: SessionRef): string {
     this.#projected.add(ref.id);
     this.#workspaceOf.set(ref.id, ref.workspaceId);
@@ -65,6 +69,7 @@ export class JazzProjector implements SessionProjector {
         ref.id,
         this.#eventBus.subscribe(ref.id, (event) => this.#onLiveEvent(ref.id, event)),
       );
+      debug("subscribed", ref.id, "workspace", ref.workspaceId);
     }
     return ref.id;
   }
@@ -76,76 +81,105 @@ export class JazzProjector implements SessionProjector {
   async onEntry(sessionId: SessionId, entry: CommittedEntry): Promise<void> {
     const message = entry.entry as { role?: string; content?: unknown };
     if (message.role !== "user" && message.role !== "assistant") return;
-
-    this.#db.insert(app.messages, {
-      sessionId,
-      workspaceId: this.#workspaceOf.get(sessionId) ?? "",
-      role: message.role,
-      text: textOfContent(message.content),
-      createdAt: new Date(entry.ts),
-      authorId: entry.actorId ?? "",
-    });
-
+    try {
+      this.#db.insert(app.messages, {
+        sessionId,
+        workspaceId: this.#workspaceOf.get(sessionId) ?? "",
+        role: message.role,
+        text: textOfContent(message.content),
+        createdAt: new Date(entry.ts),
+        authorId: entry.actorId ?? "",
+      });
+      debug("message row", sessionId, message.role, `"${textOfContent(message.content).slice(0, 40)}"`);
+    } catch (error) {
+      console.error(`[jazz] failed to project message for ${sessionId}:`, error);
+    }
     // The finalized assistant message now lives in `messages`; retire the live bubble.
     if (message.role === "assistant") this.#clearActivity(sessionId);
   }
 
-  /** Derive the ephemeral `activity` row from the live pi event stream. */
+  /** Derive the ephemeral `activity` row from the live pi event stream. Never throws. */
   #onLiveEvent(sessionId: SessionId, event: DomainEvent): void {
-    if (event.type !== "pi") return;
-    const pi = (event as { event?: PiEvent }).event;
-    if (!pi) return;
+    try {
+      if (event.type !== "pi") return;
+      const pi = (event as { event?: PiEvent }).event;
+      if (!pi) return;
 
-    switch (pi.type) {
-      case "message_start":
-        if (pi.message?.role === "user") {
-          // Turn starting; the assistant is thinking until it streams.
-          this.#setActivity(sessionId, "thinking", "");
-        } else if (pi.message?.role === "assistant") {
-          this.#stream.set(sessionId, { text: "" });
-          this.#setActivity(sessionId, "streaming", "");
-        }
-        break;
-      case "message_update":
-        if (pi.assistantMessageEvent?.type === "text_delta" && pi.assistantMessageEvent.delta) {
-          this.#appendStream(sessionId, pi.assistantMessageEvent.delta);
-        }
-        break;
-      case "turn_end":
-      case "agent_end":
-        // Safety net: clear a lingering "thinking" row for a turn that produced no message.
-        this.#clearActivity(sessionId);
-        break;
+      switch (pi.type) {
+        case "message_start":
+          if (pi.message?.role === "user") {
+            const userText = textOfContent(pi.message.content);
+            this.#turn.set(sessionId, { userText, text: "" });
+            debug("thinking", sessionId, `user="${userText.slice(0, 40)}"`);
+            this.#writeActivity(sessionId, "thinking");
+          } else if (pi.message?.role === "assistant") {
+            const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+            t.text = "";
+            this.#turn.set(sessionId, t);
+            debug("streaming start", sessionId);
+            this.#writeActivity(sessionId, "streaming");
+          }
+          break;
+        case "message_update":
+          if (pi.assistantMessageEvent?.type === "text_delta" && pi.assistantMessageEvent.delta) {
+            this.#appendStream(sessionId, pi.assistantMessageEvent.delta);
+          }
+          break;
+        case "turn_end":
+        case "agent_end":
+          debug("turn end", sessionId);
+          this.#clearActivity(sessionId);
+          break;
+      }
+    } catch (error) {
+      console.error(`[jazz] live-event handler failed for ${sessionId}:`, error);
     }
   }
 
   #appendStream(sessionId: SessionId, delta: string): void {
-    const s = this.#stream.get(sessionId) ?? { text: "" };
-    s.text += delta;
-    if (!s.timer) {
-      s.timer = setTimeout(() => {
-        s.timer = undefined;
-        this.#setActivity(sessionId, "streaming", s.text);
+    const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+    t.text += delta;
+    if (!t.timer) {
+      t.timer = setTimeout(() => {
+        t.timer = undefined;
+        this.#writeActivity(sessionId, "streaming");
       }, STREAM_FLUSH_MS);
     }
-    this.#stream.set(sessionId, s);
+    this.#turn.set(sessionId, t);
   }
 
-  #setActivity(sessionId: SessionId, kind: "thinking" | "streaming", text: string): void {
-    this.#db.upsert(
-      app.activity,
-      { sessionId, workspaceId: this.#workspaceOf.get(sessionId) ?? "", kind, text, updatedAt: new Date() },
-      { id: activityId(sessionId) },
-    );
-    this.#active.add(sessionId);
+  #writeActivity(sessionId: SessionId, kind: "thinking" | "streaming"): void {
+    const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+    try {
+      this.#db.upsert(
+        app.activity,
+        {
+          sessionId,
+          workspaceId: this.#workspaceOf.get(sessionId) ?? "",
+          kind,
+          userText: t.userText,
+          text: t.text,
+          updatedAt: new Date(),
+        },
+        { id: activityId(sessionId) },
+      );
+      this.#active.add(sessionId);
+    } catch (error) {
+      console.error(`[jazz] failed to write activity for ${sessionId}:`, error);
+    }
   }
 
   #clearActivity(sessionId: SessionId): void {
-    const s = this.#stream.get(sessionId);
-    if (s?.timer) clearTimeout(s.timer);
-    this.#stream.delete(sessionId);
+    const t = this.#turn.get(sessionId);
+    if (t?.timer) clearTimeout(t.timer);
+    this.#turn.delete(sessionId);
     if (this.#active.has(sessionId)) {
-      this.#db.delete(app.activity, activityId(sessionId));
+      try {
+        this.#db.delete(app.activity, activityId(sessionId));
+        debug("activity cleared", sessionId);
+      } catch (error) {
+        console.error(`[jazz] failed to clear activity for ${sessionId}:`, error);
+      }
       this.#active.delete(sessionId);
     }
   }

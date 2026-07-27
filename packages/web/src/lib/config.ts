@@ -15,3 +15,6 @@ export const JAZZ_APP_ID: string =
  */
 export const WS_URL: string =
   (env.VITE_WS_URL as string | undefined) ?? (import.meta.env.DEV ? "ws://localhost:8787/ws" : "");
+
+/** Verbose Jazz client/read-model logging in the browser console. */
+export const JAZZ_DEBUG: boolean = env.VITE_JAZZ_DEBUG === "1";

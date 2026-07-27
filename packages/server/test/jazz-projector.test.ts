@@ -77,43 +77,57 @@ describe("JazzProjector live activity (thinking + streaming)", () => {
   const emit = (bus: InMemoryEventBus, sessionId: string, event: unknown) =>
     bus.publish({ type: "pi", sessionId: sessionId as SessionId, event } as never);
 
-  test("thinking → throttled streaming → cleared when the message finalizes", async () => {
+  // Local-first reads are eventually consistent and **coalesce rapid updates**, so
+  // transient states (a brief "thinking" before streaming) are not reliably observable
+  // one-shot; we poll for the settled state instead.
+  async function poll(sessionId: string, until: (rows: any[]) => boolean, ms = 4000) {
+    const deadline = Date.now() + ms;
+    let rows: Array<{ kind?: string; userText?: string; text?: string }> = [];
+    while (Date.now() < deadline) {
+      rows = await db.all(app.activity.where({ sessionId }));
+      if (until(rows)) return rows;
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    return rows;
+  }
+
+  test("streams the assistant text (with the in-flight user prompt), cleared on finalize", async () => {
     const bus = new InMemoryEventBus();
     const projector = new JazzProjector(db, bus);
     const r = ref("ses_act1", "Act");
     projector.ensureSession(r);
 
-    // A user turn starts — the assistant is "thinking".
-    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "hi" } });
-    let act = await db.all(app.activity.where({ sessionId: "ses_act1" }));
-    expect(act[0]?.kind).toBe("thinking");
-
-    // Assistant starts streaming; deltas accumulate into the row (throttled).
+    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "hi there" } });
     emit(bus, r.id, { type: "message_start", message: { role: "assistant" } });
     emit(bus, r.id, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "Hel" } });
     emit(bus, r.id, { type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "lo" } });
-    await new Promise((res) => setTimeout(res, 160));
-    act = await db.all(app.activity.where({ sessionId: "ses_act1" }));
+
+    const act = await poll("ses_act1", (rows) => rows[0]?.text === "Hello");
     expect(act[0]?.kind).toBe("streaming");
     expect(act[0]?.text).toBe("Hello");
+    expect(act[0]?.userText).toBe("hi there"); // the sender's prompt shows before turn-end capture
 
     // The finalized message lands in `messages`; the ephemeral activity row is retired.
     await projector.onEntry(r.id, entry("e1", assistantMsg("Hello")));
-    act = await db.all(app.activity.where({ sessionId: "ses_act1" }));
-    expect(act).toHaveLength(0);
+    const cleared = await poll("ses_act1", (rows) => rows.length === 0);
+    expect(cleared).toHaveLength(0);
     const msgs = await db.all(app.messages.where({ sessionId: "ses_act1" }));
     expect(msgs.map((m) => m.text)).toContain("Hello");
   });
 
-  test("turn_end clears a lingering thinking row (no assistant output)", async () => {
+  test("a thinking-only turn shows the prompt, then clears on turn_end", async () => {
     const bus = new InMemoryEventBus();
     const projector = new JazzProjector(db, bus);
     const r = ref("ses_act2", "Act2");
     projector.ensureSession(r);
 
-    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "hi" } });
-    expect((await db.all(app.activity.where({ sessionId: "ses_act2" })))[0]?.kind).toBe("thinking");
+    emit(bus, r.id, { type: "message_start", message: { role: "user", content: "ping" } });
+    const act = await poll("ses_act2", (rows) => rows.length > 0);
+    expect(act[0]?.kind).toBe("thinking");
+    expect(act[0]?.userText).toBe("ping");
+
     emit(bus, r.id, { type: "turn_end" });
-    expect(await db.all(app.activity.where({ sessionId: "ses_act2" }))).toHaveLength(0);
+    const cleared = await poll("ses_act2", (rows) => rows.length === 0);
+    expect(cleared).toHaveLength(0);
   });
 });

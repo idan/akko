@@ -147,10 +147,18 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
    shows live streaming too** — an ephemeral `activity` table (thinking + throttled
    streaming text) projected from the pi event stream, deleted when the finalized message
    lands (`jazz-projector.ts`). This is phases 1–2 of the "make Jazz the sole read model"
-   plan; **phase 3 = measure** the streaming feel vs. the WS before committing to unify
-   (drop the client reducer, WS becomes commands-only). *Deferred:* user-typing presence
-   (client-scoped writes) and crash-staleness of the ephemeral row (survives a mid-turn
-   backend restart until the next turn).
+   plan. **Phase-3 finding (measured):** Jazz's local-first sync is **eventually
+   consistent and coalesces rapid updates** — transient states (a brief "thinking" before
+   streaming) are often swallowed before they become queryable, streaming text arrives in
+   coalesced jumps rather than smoothly, and there's propagation lag vs. the WS. Lowering
+   `STREAM_FLUSH_MS` (now 40ms) reduces choppiness but can't beat the coalescing/latency.
+   So Jazz is a great *state* read model (history, final messages, presence) but the WS
+   is still better for *high-frequency token streaming*. **Open decision:** full unify
+   (WS commands-only) likely wants a hybrid — Jazz for state, WS deltas for the live token
+   stream — rather than pushing every token through Jazz. Defensive logging added
+   (`AKKO_JAZZ_DEBUG=1` backend, `VITE_JAZZ_DEBUG=1` frontend); the event bus now isolates
+   listener failures so a projector error can't break WS delivery. *Deferred:* user-typing
+   presence, crash-staleness of the ephemeral row.
 
 **C. Core features not yet built**
 5. **`ModelRouter`** (doc 05): ~~string resolver first~~ **slice 1 done** — `AkkoModelRouter`

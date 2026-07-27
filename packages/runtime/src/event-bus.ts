@@ -13,8 +13,16 @@ export class InMemoryEventBus implements EventBus {
   publish(event: DomainEvent): void {
     const set = this.#listeners.get(event.sessionId);
     if (!set) return;
-    // Copy to tolerate unsubscribe during iteration.
-    for (const listener of [...set]) listener(event);
+    // Copy to tolerate unsubscribe during iteration, and isolate failures: one throwing
+    // listener (e.g. a projector write error) must never break delivery to the others
+    // (notably the WS gateway) or propagate back into the runtime.
+    for (const listener of [...set]) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error(`[eventbus] listener failed for ${event.sessionId} (${event.type}):`, error);
+      }
+    }
   }
 
   subscribe(sessionId: SessionId, listener: Listener): () => void {
