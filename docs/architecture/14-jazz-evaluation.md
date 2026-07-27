@@ -84,6 +84,16 @@ table."
   this, only messages sent *after* the projector saw the session are ever visible.
 - **Row order is not insertion order.** Row ids are content-derived, so queries must
   `orderBy("createdAt")` explicitly (the UI does).
+- **The browser client must use `driver: { type: "memory" }`.** Jazz's default is
+  `persistent`, which in a browser means an OPFS store behind a **SharedWorker** that
+  outlives page reloads *and* the dev sync server (which is `--in-memory`, so it is wiped
+  on every restart). The result is a stale local database that never reconciles: queries
+  succeed, return **0 rows, and report no error** — indistinguishable from "no data".
+  Diagnosed with `bun run jazz:probe <sessionId> <jwt>`: reading the same server as the
+  backend *and* as the user's own token both returned every row, proving the data and the
+  row policy were fine and the fault was browser-local. Memory is also right on principle:
+  the Jazz store is a **disposable projection** of SQLite (doc 04), so client-side
+  persistence buys nothing and only creates staleness.
 - Still the discipline rule: Jazz remains a *projection* of SQLite; the canonical
   conversation never lives only in a Jazz table.
 - Upside banked: **much smaller bundle**, and a data model that matches ours.
