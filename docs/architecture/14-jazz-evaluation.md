@@ -69,6 +69,14 @@ table."
 - **Alpha** — `2.0.0-alpha.x`, churning; expect breaking changes. Pin the exact version.
 - New surface: **schema deploy/migrations, JWT auth, row policies** — more than CoValue
   sync, but conventional DB concepts.
+- **Schema changes need a fresh sync server in dev.** The browser client publishes its
+  local schema to the catalogue on connect; when it doesn't match the deployed one the
+  server returns `CatalogueWriteDenied` and the read can't resolve (projected history
+  disappears). Redeploying a *changed* schema to an already-running in-memory server does
+  **not** cleanly switch the catalogue (verified), so after any `@akko/schema` change you
+  must **fully restart `bun run dev:jazz`** (fresh in-memory sync server + the backend
+  redeploys on boot). `dev:server` does not auto-restart, so a code-only reload of the web
+  app against a stale backend/catalogue is the common way to hit this.
 - Still the discipline rule: Jazz remains a *projection* of SQLite; the canonical
   conversation never lives only in a Jazz table.
 - Upside banked: **much smaller bundle**, and a data model that matches ours.

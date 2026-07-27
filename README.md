@@ -49,6 +49,12 @@ waits for the standalone Jazz server to be listening before it deploys its schem
 individual processes are still available if you want separate terminals:
 `bun run dev:sync`, `bun run dev:server`, `bun run dev:web`.
 
+> **After any `@akko/schema` change, fully restart `dev:jazz`** (Ctrl-C, rerun). The
+> in-memory sync server keeps its old schema catalogue and `dev:server` doesn't
+> auto-restart, so a stale catalogue makes the browser client hit `CatalogueWriteDenied`
+> and the projected view goes empty. A full restart gives a fresh sync server + a
+> redeploy (doc 14).
+
 Design components in isolation (optional, separate dev server):
 
 ```bash
