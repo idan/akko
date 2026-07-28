@@ -42,7 +42,7 @@ export interface EntrySink {
 
 /**
  * Pub/sub transport for `DomainEvent`s, keyed by session. In-process emitter today;
- * Redis/NATS later (doc 02). This is what the WebSocket gateway subscribes to in
+ * Redis/NATS later (doc 02). This is what the Jazz projector subscribes to in
  * order to fan events out to browser clients (doc 08).
  */
 export interface EventBus {

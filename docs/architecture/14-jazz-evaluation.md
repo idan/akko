@@ -78,7 +78,7 @@ table."
   `WARN` when the schema is already deployed (the write is redundant), **not** a read
   failure. Redeploying a *changed* schema to an already-running in-memory server does not
   cleanly switch the catalogue (verified), so after any `@akko/schema` change fully
-  restart `bun run dev:jazz`.
+  restart `bun run dev`.
 - **The projection must be rebuilt from canonical.** The Jazz store is disposable (the dev
   sync server is `--in-memory`, so every restart wipes it). `JazzProjector.rebuild()`
   backfills a session's messages from the `ConversationStore` on first sight
@@ -103,7 +103,7 @@ table."
 ## Status
 
 **Migrated to 2.0-alpha and verified against a standalone server** (behind the existing
-seams; the WS path is unchanged and Jazz is opt-in):
+seams; at the time the WS path was unchanged and Jazz was opt-in):
 
 - `@akko/schema` — relational `messages`, `sessions` and `activity` tables + `defineApp`
   + workspace read-ACL `definePermissions` (doc 16); clients are read-only.
@@ -115,7 +115,7 @@ seams; the WS path is unchanged and Jazz is opt-in):
   (+ `JAZZ_ADMIN_SECRET`) are set.
 - `@akko/web` — `JazzSvelteProvider` (Better Auth JWT, memory driver) +
   `QuerySubscription`-backed message list, session list and chat header, gated behind
-  `VITE_JAZZ=1`.
+  the frontend (Jazz is no longer flag-gated; it is the only read model).
 - **Verified live**: `jazz-tools server` runs on Bun; the backend deploys schema +
   policies on boot; a real agent turn flows through the full backend; and **two browser
   tabs render from the read model** — session list, in-flight thinking/streaming, and
@@ -152,7 +152,7 @@ writes, even when the row never reaches the server or is refused by policy. Two 
 tests must read from a **separate client**, and lifecycle bugs need a **multi-turn**
 scenario.
 
-Jazz is now the **default read model** in the `VITE_JAZZ=1` configuration: the session
+Jazz is now the **sole read model**: the session
 list, message history and the in-flight turn all render from reactive queries, and the
 Live/Jazz toggle is gone (the WS reducer view remains the fallback when Jazz is off).
 Next: retire the WebSocket entirely in favour of HTTP commands (unify step 3, doc 15) and

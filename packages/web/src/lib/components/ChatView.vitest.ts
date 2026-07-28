@@ -9,19 +9,18 @@ vi.mock("jazz-tools/svelte", () => ({ QuerySubscription: class {
   error = null;
   constructor(_q: unknown) {}
 } }));
-vi.mock("@akko/schema", () => ({ app: { messages: { where: () => ({}) } } }));
+vi.mock("@akko/schema", () => ({
+  app: { messages: { where: () => ({}) }, activity: { where: () => ({}) } },
+}));
 
 import ChatView from "./ChatView.svelte";
 import type { AkkoClient } from "../client.svelte.ts";
-import type { ConversationState } from "../conversation.ts";
 
 function client(over: Partial<AkkoClient> = {}): AkkoClient {
   return {
     sessions: [],
     models: [],
     activeSessionId: null,
-    activeConversation: { messages: [] } as ConversationState,
-    activeJazzId: undefined,
     error: null,
     sendPrompt: vi.fn(),
     setModel: vi.fn(),
@@ -36,17 +35,24 @@ describe("ChatView", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  test("renders the active session title and its messages", () => {
+  test("renders the active session title from the read-model row when given one", () => {
     render(ChatView, {
-      client: client({
-        sessions: [{ id: "s1", title: "Roadmap" }] as AkkoClient["sessions"],
-        activeSessionId: "s1",
-        activeConversation: { messages: [{ id: "m1", role: "assistant", text: "hello", streaming: false }] },
-      }),
+      client: client({ activeSessionId: "s1" }),
+      session: { title: "Roadmap" },
       onmenu: vi.fn(),
     });
     expect(screen.getByRole("heading", { name: "Roadmap" })).toBeInTheDocument();
-    expect(screen.getByText("hello")).toBeInTheDocument();
+  });
+
+  test("falls back to the client's session copy for the title", () => {
+    render(ChatView, {
+      client: client({
+        sessions: [{ id: "s1", title: "From HTTP" }] as AkkoClient["sessions"],
+        activeSessionId: "s1",
+      }),
+      onmenu: vi.fn(),
+    });
+    expect(screen.getByRole("heading", { name: "From HTTP" })).toBeInTheDocument();
   });
 
   test("the composer sends prompts through the client", async () => {
@@ -69,8 +75,8 @@ describe("ChatView", () => {
   });
 
   test("surfaces a client error as an alert", () => {
-    render(ChatView, { client: client({ error: "websocket error" }), onmenu: vi.fn() });
-    expect(screen.getByRole("alert")).toHaveTextContent("websocket error");
+    render(ChatView, { client: client({ error: "command rejected" }), onmenu: vi.fn() });
+    expect(screen.getByRole("alert")).toHaveTextContent("command rejected");
   });
 
   test("the model picker reflects the session model and sets it on change", async () => {

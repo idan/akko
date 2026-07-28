@@ -1,43 +1,32 @@
 /**
- * @akko/protocol — the WS + HTTP gateway wire protocol (doc 08).
+ * @akko/protocol — the HTTP gateway wire protocol (doc 08).
  *
  * Shared between the server (`@akko/server`) and the browser (`@akko/web`). It depends
  * only on `@akko/core` types (which are erased at build), so importing it into the
  * frontend pulls no `bun`/pi runtime.
  *
- * CQRS over one multiplexed WebSocket: clients send attributed **commands** and
- * **subscribe** to sessions; the server streams **events** back. Clients never mutate
- * state directly — a `command` becomes an attributed `Command` posted to the owning
- * session's mailbox (doc 03/04). Identity (`principalId`) is established at connection
- * time, not per message.
+ * CQRS: clients POST attributed **commands** over HTTP and observe every effect through
+ * the **Jazz read model** (doc 14/15) — there is no socket and no client-side event
+ * folding. Clients never mutate state directly: a command becomes an attributed
+ * `Command` posted to the owning session's mailbox (doc 03/04), and identity comes from
+ * the Better Auth session cookie server-side, never from the request body.
  */
-import type { CommandVerb, DomainEvent, MailboxResult, ModelCatalogEntry, SessionRef } from "@akko/core";
+import type { CommandVerb, MailboxResult, ModelCatalogEntry, SessionRef } from "@akko/core";
 
 export type { CommandVerb, DomainEvent, MailboxResult, ModelCatalogEntry, SessionRef } from "@akko/core";
 
-/** Client -> server. */
-export type ClientMessage =
-  | { t: "subscribe"; sessionId: string }
-  | { t: "unsubscribe"; sessionId: string }
-  | {
-      t: "command";
-      cid?: string;
-      sessionId: string;
-      verb: CommandVerb;
-      args?: unknown;
-      streamingBehavior?: "steer" | "followUp";
-    };
+/** HTTP: POST /api/sessions/:id/commands. The actor is derived server-side. */
+export interface CommandRequest {
+  verb: CommandVerb;
+  args?: Record<string, unknown>;
+  streamingBehavior?: "steer" | "followUp";
+}
+export interface CommandResponse {
+  result: MailboxResult;
+}
 
-/** Server -> client. */
-export type ServerMessage =
-  | { t: "welcome"; principalId: string }
-  | { t: "subscribed"; sessionId: string }
-  | { t: "event"; event: DomainEvent }
-  | { t: "ack"; cid?: string; sessionId: string; result: MailboxResult }
-  | { t: "error"; cid?: string; message: string };
-
-/** A session plus its optional Jazz projection id (doc 14). */
-export type SessionSummary = SessionRef & { jazzId?: string };
+/** A session as the API returns it. */
+export type SessionSummary = SessionRef;
 
 /** HTTP: create-conversation request/response bodies. */
 export interface CreateSessionRequest {
@@ -60,8 +49,8 @@ export interface ListModelsResponse {
 
 /**
  * A finalized message for seeding the UI on (re)select (doc 08). `content` is pi's
- * message content verbatim (string or content blocks) — the same shape carried over the
- * WS `event` stream — so the frontend reduces it with the same text extraction.
+ * message content verbatim (string or content blocks). Primarily feeds the read-model
+ * backfill and debugging now that the browser reads from Jazz.
  */
 export interface HistoryMessage {
   id: string;

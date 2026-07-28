@@ -2,11 +2,9 @@
   import { onMount } from "svelte";
   import { createJazzClient, JazzSvelteProvider, type JazzClient } from "jazz-tools/svelte";
   import { AkkoClient } from "./lib/client.svelte.ts";
-  import { JAZZ_ENABLED, JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
+  import { JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
   import { currentUser, signOut, getJazzToken, decodeJwtPayload, type AuthedUser } from "./lib/auth-client.ts";
-  import SessionList from "./lib/components/SessionList.svelte";
   import JazzSessionList from "./lib/components/JazzSessionList.svelte";
-  import ChatView from "./lib/components/ChatView.svelte";
   import JazzChatView from "./lib/components/JazzChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
 
@@ -22,16 +20,22 @@
   // Jazz 2.0 client (opt-in): connects to the sync server authenticated with the Better
   // Auth JWT, so the read-ACL row policy filters projected messages by workspace (doc 16).
   // Decoupled from the core app: we only wrap the shell in the provider once the client
-  // has *successfully* resolved. A Jazz failure (e.g. JWT rejected by the sync server) is
-  // logged and leaves the read model disabled — it must never block the WS or the shell.
+  // has *successfully* resolved. Jazz is now the only read model (doc 15, unify step 3):
+  // without it there is nothing to render, so a failure surfaces to the user and retries
+  // rather than silently degrading to a blank app.
   let jazzClient = $state<JazzClient | null>(null);
+  let jazzError = $state<string | null>(null);
+  // Bumped to re-run the effect after a failure — the read model is load-bearing now, so
+  // "give up" is not an option; keep retrying while the user waits.
+  let jazzAttempt = $state(0);
   $effect(() => {
-    if (JAZZ_ENABLED && user && !jazzClient) {
+    void jazzAttempt;
+    if (user && !jazzClient) {
       void (async () => {
         try {
           const jwtToken = await getJazzToken();
           if (!jwtToken) {
-            console.warn("[jazz] no token (not authenticated?) — read model disabled");
+            jazzError = "Could not get a read-model token. Are you signed in?";
             return;
           }
           if (JAZZ_DEBUG) console.log("[jazz] connecting to", JAZZ_SYNC, "app", JAZZ_APP_ID);
@@ -50,9 +54,12 @@
             driver: { type: "memory" },
           });
           if (JAZZ_DEBUG) console.log("[jazz] connected; session:", JSON.stringify(client.session));
+          jazzError = null;
           jazzClient = client;
         } catch (err) {
-          console.error("[jazz] client unavailable (core app unaffected):", err);
+          console.error("[jazz] client unavailable:", err);
+          jazzError = `Read model unavailable at ${JAZZ_SYNC}. Is the sync server running? Retrying…`;
+          setTimeout(() => (jazzAttempt += 1), 3000);
         }
       })();
     }
@@ -76,7 +83,6 @@
     user = resolved;
     if (user && !client) {
       const c = new AkkoClient({ principalId: user.id, workspaceId: WORKSPACE });
-      c.connect();
       void c.loadSessions();
       void c.loadModels();
       client = c;
@@ -107,24 +113,14 @@
              {sidebarOpen ? 'flex' : 'hidden'}"
     >
       <div class="flex min-h-0 flex-1 flex-col">
-        {#if jazzClient}
-          <!-- Session list straight off the Jazz read model: live across tabs/devices. -->
-          <JazzSessionList
-            workspaceId={WORKSPACE}
-            activeId={c.activeSessionId}
-            connected={c.connected}
-            onselect={selectSession}
-            oncreate={() => void c.createSession()}
-          />
-        {:else}
-          <SessionList
-            sessions={c.sessions}
-            activeId={c.activeSessionId}
-            connected={c.connected}
-            onselect={selectSession}
-            oncreate={() => void c.createSession()}
-          />
-        {/if}
+        <!-- Session list straight off the Jazz read model: live across tabs/devices. -->
+        <JazzSessionList
+          workspaceId={WORKSPACE}
+          activeId={c.activeSessionId}
+          connected={true}
+          onselect={selectSession}
+          oncreate={() => void c.createSession()}
+        />
       </div>
       <div class="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-2.5 text-[0.85rem]">
         <span class="min-w-0 truncate text-muted" title={user?.email}>{user?.name}</span>
@@ -137,11 +133,7 @@
       </div>
     </aside>
     <main class="min-w-0 pane:flex {sidebarOpen ? 'hidden' : 'flex'}">
-      {#if jazzClient}
-        <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
-      {:else}
-        <ChatView client={c} jazzReady={false} onmenu={() => (sidebarOpen = !sidebarOpen)} />
-      {/if}
+      <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
     </main>
   </div>
 {/snippet}
@@ -155,6 +147,8 @@
     {@render shell(client)}
   </JazzSvelteProvider>
 {:else}
-  {@render shell(client)}
+  <div class="grid min-h-screen place-items-center p-4 text-center text-muted">
+    {jazzError ?? "Connecting to the read model…"}
+  </div>
 {/if}
 

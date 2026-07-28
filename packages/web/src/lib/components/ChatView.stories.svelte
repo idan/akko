@@ -3,7 +3,6 @@
   import { expect, fn, userEvent } from "storybook/test";
   import ChatView from "./ChatView.svelte";
   import type { AkkoClient } from "../client.svelte.ts";
-  import type { ConversationState } from "../conversation.ts";
 
   // ChatView reads a handful of fields + sendPrompt(); a plain stub is enough.
   function client(over: Partial<AkkoClient> & { sendPrompt?: AkkoClient["sendPrompt"] } = {}): AkkoClient {
@@ -11,8 +10,6 @@
       sessions: [],
       models: [],
       activeSessionId: null,
-      activeConversation: { messages: [] } as ConversationState,
-      activeJazzId: undefined,
       error: null,
       sendPrompt: fn(),
       setModel: fn(),
@@ -27,12 +24,6 @@
       { provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5" },
       { provider: "anthropic", id: "claude-3-5-haiku", name: "Claude Haiku 3.5" },
     ] as AkkoClient["models"],
-    activeConversation: {
-      messages: [
-        { id: "m1", role: "user", text: "What are the next steps?", streaming: false },
-        { id: "m2", role: "assistant", text: "Close out the Jazz slice, then model routing.", streaming: false },
-      ],
-    },
   });
 
   const { Story } = defineMeta({

@@ -1,57 +1,29 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+/**
+ * AkkoClient is write-only now (doc 15, unify step 3): HTTP for sessions and commands,
+ * with every read coming from the Jazz read model. So these tests are about the *command*
+ * contract — URL, method, credentials, and how a rejection differs from a failure.
+ */
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { AkkoClient } from "./client.svelte.ts";
-import type { ServerMessage } from "@akko/protocol";
 
-/** Minimal fake WebSocket: records sent frames and lets tests emit server messages. */
-class FakeWebSocket {
-  static last: FakeWebSocket | undefined;
-  static readonly OPEN = 1;
-  readyState = 1; // OPEN — the client only sends once the socket is open
-  sent: string[] = [];
-  #listeners: Record<string, ((e: any) => void)[]> = {};
-  url: string;
-
-  constructor(url: string) {
-    this.url = url;
-    FakeWebSocket.last = this;
-  }
-  addEventListener(type: string, cb: (e: any) => void) {
-    (this.#listeners[type] ??= []).push(cb);
-  }
-  send(data: string) {
-    this.sent.push(data);
-  }
-  emit(type: string, e: any) {
-    for (const cb of this.#listeners[type] ?? []) cb(e);
-  }
-  server(msg: ServerMessage) {
-    this.emit("message", { data: JSON.stringify(msg) });
-  }
-}
-
-const flush = () => new Promise((r) => setTimeout(r, 0));
-
-beforeEach(() => {
-  vi.stubGlobal("WebSocket", FakeWebSocket as unknown as typeof WebSocket);
-});
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
-function makeClient() {
-  return new AkkoClient({ principalId: "prn_test", workspaceId: "wsp_test" });
+const makeClient = () => new AkkoClient({ principalId: "prn_test", workspaceId: "wsp_test" });
+
+/** Stub `fetch` with a JSON body and status. */
+function stubFetch(body: unknown, ok = true, status = 200) {
+  const fn = vi.fn(async () => ({ ok, status, json: async () => body }));
+  vi.stubGlobal("fetch", fn as unknown as typeof fetch);
+  return fn;
 }
 
 describe("AkkoClient", () => {
-  test("loadSessions populates sessions and remembers jazz ids", async () => {
+  test("loadSessions populates the session list", async () => {
     const client = makeClient();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        json: async () => ({ sessions: [{ id: "s1", title: "One" }] }),
-      })) as unknown as typeof fetch,
-    );
+    stubFetch({ sessions: [{ id: "s1", title: "One" }] });
 
     await client.loadSessions();
 
@@ -65,163 +37,85 @@ describe("AkkoClient", () => {
 
   test("createSession prepends the new session and makes it active", async () => {
     const client = makeClient();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ json: async () => ({ ref: { id: "s9", title: "New" } }) })) as unknown as typeof fetch,
-    );
+    stubFetch({ ref: { id: "s9", title: "New" } });
 
     await client.createSession("New");
 
     expect(client.sessions[0]).toMatchObject({ id: "s9", title: "New" });
     expect(client.activeSessionId).toBe("s9");
-    expect(client.activeConversation.messages).toEqual([]);
   });
 
-  test("welcome flips connected and resubscribes to known sessions", async () => {
+  test("loadModels populates the picker, and a failed request is a no-op", async () => {
     const client = makeClient();
-    client.select("s1");
-    client.connect();
-    const ws = FakeWebSocket.last!;
-    ws.server({ t: "welcome" } as ServerMessage);
-
-    expect(client.connected).toBe(true);
-    // one subscribe queued at select() could not send (no socket yet); welcome resends.
-    const subscribes = ws.sent.map((s) => JSON.parse(s)).filter((m) => m.t === "subscribe");
-    expect(subscribes).toContainEqual({ t: "subscribe", sessionId: "s1" });
-  });
-
-  test("sendPrompt sets the awaiting (thinking) flag on the active conversation", async () => {
-    const client = makeClient();
-    client.select("s1");
-    client.connect();
-    FakeWebSocket.last!.server({ t: "welcome" } as ServerMessage);
-
-    client.sendPrompt("hi");
-    expect(client.activeConversation.awaiting).toBe(true);
-  });
-
-  test("select seeds canonical history once, only while the conversation is empty", async () => {
-    const client = makeClient();
-    const fetchMock = vi.fn(async () => ({
-      ok: true,
-      json: async () => ({
-        messages: [
-          { id: "h1", role: "user", content: "my name is Ada" },
-          { id: "h2", role: "assistant", content: [{ type: "text", text: "Hi Ada" }] },
-        ],
-      }),
-    }));
-    vi.stubGlobal("fetch", fetchMock as unknown as typeof fetch);
-    client.connect();
-
-    client.select("s1");
-    await flush();
-    expect(client.activeConversation.messages.map((m) => m.text)).toEqual(["my name is Ada", "Hi Ada"]);
-    expect(fetchMock).toHaveBeenCalledWith("/api/sessions/s1/history", expect.anything());
-
-    // Re-selecting does not refetch (history is loaded once per session).
-    client.select("s1");
-    await flush();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  test("history seeding does not clobber events that already streamed in", async () => {
-    const client = makeClient();
-    let resolveFetch: (v: unknown) => void = () => {};
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(() => new Promise((r) => (resolveFetch = r))) as unknown as typeof fetch,
-    );
-    client.connect();
-    client.select("s1");
-
-    // A live event arrives before history resolves.
-    FakeWebSocket.last!.server({
-      t: "event",
-      event: { type: "pi", sessionId: "s1", event: { type: "message_start", message: { role: "user", content: "live" } } },
-    } as ServerMessage);
-
-    resolveFetch({ ok: true, json: async () => ({ messages: [{ id: "h1", role: "user", content: "old" }] }) });
-    await flush();
-
-    // Live state wins; history is not applied over it.
-    expect(client.activeConversation.messages.map((m) => m.text)).toEqual(["live"]);
-  });
-
-  test("an incoming pi event is folded into the session conversation", async () => {
-    const client = makeClient();
-    client.select("s1");
-    client.connect();
-    const ws = FakeWebSocket.last!;
-
-    ws.server({
-      t: "event",
-      event: { type: "pi", sessionId: "s1", event: { type: "message_start", message: { role: "user", content: "hi" } } },
-    } as ServerMessage);
-
-    client.select("s1");
-    expect(client.activeConversation.messages).toHaveLength(1);
-    expect(client.activeConversation.messages[0]).toMatchObject({ role: "user", text: "hi" });
-  });
-
-  test("sendPrompt emits an attributed command frame", async () => {
-    const client = makeClient();
-    client.select("s1");
-    client.connect();
-    const ws = FakeWebSocket.last!;
-    ws.server({ t: "welcome" } as ServerMessage);
-
-    client.sendPrompt("  do it  ");
-
-    const cmd = ws.sent.map((s) => JSON.parse(s)).find((m) => m.t === "command");
-    expect(cmd).toMatchObject({ t: "command", sessionId: "s1", verb: "prompt", args: { text: "do it" } });
-    await flush();
-  });
-
-  test("an error message surfaces on the store", async () => {
-    const client = makeClient();
-    client.connect();
-    FakeWebSocket.last!.server({ t: "error", message: "nope" } as ServerMessage);
-    expect(client.error).toBe("nope");
-  });
-
-  test("loadModels populates the model catalog", async () => {
-    const client = makeClient();
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        json: async () => ({ models: [{ provider: "anthropic", id: "claude-3-5-haiku", name: "Haiku" }] }),
-      })) as unknown as typeof fetch,
-    );
+    stubFetch({ models: [{ id: "m", provider: "p", name: "M" }] });
     await client.loadModels();
     expect(client.models).toHaveLength(1);
-    expect(client.models[0]).toMatchObject({ provider: "anthropic", id: "claude-3-5-haiku" });
-    expect(fetch).toHaveBeenCalledWith("/api/models?workspaceId=wsp_test", expect.anything());
+
+    stubFetch({}, false, 500);
+    await client.loadModels();
+    expect(client.models).toHaveLength(1); // unchanged
   });
 
-  test("setModel sends a command and optimistically updates the session", async () => {
+  test("sendPrompt POSTs an attributed command to the session's command endpoint", async () => {
     const client = makeClient();
-    client.sessions = [{ id: "s1", title: "S" }] as typeof client.sessions;
+    const fn = stubFetch({ result: { accepted: true } });
     client.select("s1");
-    client.connect();
-    FakeWebSocket.last!.server({ t: "welcome" } as ServerMessage);
 
-    client.setModel("s1", "anthropic/claude-3-5-haiku");
+    client.sendPrompt("  hello  ");
+    await vi.waitFor(() => expect(fn).toHaveBeenCalled());
 
-    const cmd = FakeWebSocket.last!.sent.map((s) => JSON.parse(s)).find((m) => m.verb === "setModel");
-    expect(cmd).toMatchObject({ t: "command", sessionId: "s1", args: { model: "anthropic/claude-3-5-haiku" } });
-    expect(client.sessions.find((s) => s.id === "s1")?.model).toBe("anthropic/claude-3-5-haiku");
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/sessions/s1/commands");
+    expect(init.method).toBe("POST");
+    expect(init.credentials).toBe("include"); // identity is the cookie, never the body
+    expect(JSON.parse(String(init.body))).toEqual({ verb: "prompt", args: { text: "hello" } });
+    expect(client.error).toBeNull();
   });
 
-  test("a session patch event updates the model across tabs", async () => {
+  test("sendPrompt ignores empty text and does nothing without an active session", async () => {
     const client = makeClient();
-    client.sessions = [{ id: "s1", title: "S", model: "anthropic/opus" }] as typeof client.sessions;
-    client.connect();
-    FakeWebSocket.last!.server({
-      t: "event",
-      event: { type: "session", sessionId: "s1", patch: { model: "anthropic/haiku" } },
-    } as unknown as ServerMessage);
-    expect(client.sessions.find((s) => s.id === "s1")?.model).toBe("anthropic/haiku");
+    const fn = stubFetch({ result: { accepted: true } });
+
+    client.sendPrompt("hi"); // no active session
+    client.select("s1");
+    client.sendPrompt("   "); // whitespace only
+
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  test("a rejected command surfaces its reason rather than looking like success", async () => {
+    const client = makeClient();
+    stubFetch({ result: { accepted: false, reason: "session is busy" } });
+    client.select("s1");
+
+    await client.command("s1", "prompt", { text: "x" });
+
+    expect(client.error).toBe("session is busy");
+  });
+
+  test("a transport failure surfaces the server's error message", async () => {
+    const client = makeClient();
+    stubFetch({ error: "not a member of this workspace" }, false, 403);
+
+    await client.command("s1", "prompt", { text: "x" });
+
+    expect(client.error).toBe("not a member of this workspace");
+  });
+
+  test("setModel posts the command and echoes locally so the picker doesn't snap back", async () => {
+    const client = makeClient();
+    const fn = stubFetch({ result: { accepted: true } });
+    client.sessions = [{ id: "s1", title: "One" } as never];
+
+    client.setModel("s1", "anthropic/claude-sonnet-4-5");
+
+    expect(client.sessions[0]).toMatchObject({ model: "anthropic/claude-sonnet-4-5" });
+    await vi.waitFor(() => expect(fn).toHaveBeenCalled());
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/sessions/s1/commands");
+    expect(JSON.parse(String(init.body))).toEqual({
+      verb: "setModel",
+      args: { model: "anthropic/claude-sonnet-4-5" },
+    });
   });
 });

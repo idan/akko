@@ -1,15 +1,12 @@
 <script lang="ts">
   import type { AkkoClient } from "../client.svelte.ts";
-  import MessageList from "./MessageList.svelte";
   import JazzMessageList from "./JazzMessageList.svelte";
   import Composer from "./Composer.svelte";
 
-  let { client, onmenu, jazzReady = false, session = undefined }: {
+  let { client, onmenu, session = undefined }: {
     client: AkkoClient;
     onmenu: () => void;
-    /** True when a Jazz provider is mounted — then the read model is THE view (doc 15). */
-    jazzReady?: boolean;
-    /** Session metadata from the read model. Falls back to the WS client's copy. */
+    /** Session metadata from the read model (doc 14). */
     session?: { title?: string; model?: string };
   } = $props();
 
@@ -45,13 +42,7 @@
   </header>
 
   {#if client.activeSessionId}
-    <!-- Jazz is the read model when a provider is mounted; the WS reducer view is the
-         fallback for the no-Jazz setup (doc 15, unify step 2). -->
-    {#if jazzReady}
-      <JazzMessageList sessionId={client.activeSessionId} />
-    {:else}
-      <MessageList conversation={client.activeConversation} />
-    {/if}
+    <JazzMessageList sessionId={client.activeSessionId} />
     <Composer onsend={(t) => client.sendPrompt(t)} />
   {:else}
     <div class="grid flex-1 place-items-center text-muted">Create or select a session to begin.</div>

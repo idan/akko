@@ -30,7 +30,7 @@ The frontend never mutates authoritative state. It follows the single-writer rul
 (doc 04):
 
 ```
-Browser ──command (prompt/steer/abort/setModel/fork/spawn/toggle-skill)──▶ Backend
+Browser ──HTTP command (prompt/steer/abort/setModel/fork/spawn/toggle-skill)──▶ Backend
                                                                             │
                                                      mailbox → SessionRuntime → pi
                                                                             │

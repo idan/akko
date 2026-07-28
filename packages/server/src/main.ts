@@ -134,4 +134,3 @@ const server = createGatewayServer({
 console.log(`akko gateway listening on http://localhost:${server.port}`);
 console.log(`  workspace: ${workspaceId}`);
 console.log(`  data dir:  ${dataDir}`);
-console.log(`  ws:        ws://localhost:${server.port}/ws  (auth via session cookie)`);

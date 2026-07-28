@@ -4,38 +4,26 @@
 project is, what is proven, how to run it, and what to do next. The numbered docs
 00–16 hold the *why* behind each decision; this doc holds the *state* and the *plan*.
 
-_Last updated: after passkey auth (doc 16), the Jazz read-ACL, and **steps 1–2 of the
-unify plan** — Jazz is now the default read model (reactive session list + message view;
-the Live/Jazz toggle is gone)._
+_Last updated: after **the unify plan completed through step 3** — commands go over HTTP,
+the WebSocket is gone, and Jazz is the sole read model._
 
 ## ▶ Pick up here
 
-**Next action: unify step 3** — move commands to HTTP and delete the WebSocket, the
-client-side conversation reducer and the event fan-out (~800 lines). See
-[the unify plan](#a2-making-jazz-the-sole-read-model-the-unify-plan) below for the full
-sequence and rationale.
+**Unify steps 1–3 are done.** The WebSocket, the client-side conversation reducer and the
+per-socket event fan-out are deleted (~800 lines): the browser POSTs commands to
+`/api/sessions/:id/commands` and observes every effect through Jazz. All three gating
+measurements passed — write amplification is bounded (~24 writes/s while streaming), two
+tabs on one session stay in sync, and **reconnect converges** after going offline mid-turn.
 
-**Do this first:** step 3 is the least reversible move, so take the three measurements
-agreed before committing to it:
+**Next action: unify step 4** — presence/typing + per-message attribution, now cheap
+because everything is already a Jazz table (see the plan below). Or pick from
+[C. Core features](#c-core-features-not-yet-built): **subagents** (`spawnSubagent` is
+still a stub) is the biggest capability gain, then the **task classifier** for
+`ModelRouter`, then `SkillsService`.
 
-1. ~~**Write amplification** — rows/sec written per turn at the 40ms `STREAM_FLUSH_MS`~~ —
-   **measured, and it passes** (`jazz-write-amplification.test.ts`). Streaming costs
-   **~24 row-writes/sec while a turn is in flight, and nothing between turns**, because
-   the projector leading-edge-throttles deltas into a single `activity` row: 400 tokens
-   over 2.35s cost 57 writes (a 7× reduction vs. one-per-token), and the rate is capped at
-   `1000/STREAM_FLUSH_MS` ≈ 25/s **regardless of how fast the model emits**. It is one row
-   × N revisions, so cost tracks *turn duration*, not token count or observer count.
-   Verdict: bounded and acceptable — this does not block step 3.
-2. **Two tabs on one session** — needs a browser; confirm both see the same in-flight text
-   and neither flickers.
-3. **Throttled network** — needs a browser; confirm streaming degrades gracefully rather
-   than stalling the composer.
-
-If 2 or 3 look bad, step 2 is a perfectly good resting place and the WS stays.
-
-Smaller, independent things you could do instead: session **rename** (the `rename` verb
-exists in `CommandVerb`, unimplemented), the **task classifier** for `ModelRouter`
-(doc 05, C5), or **subagents** (doc 03, C6).
+**Note:** Jazz is no longer optional. There is no `VITE_JAZZ` flag and no non-Jazz dev
+mode — `bun run dev` starts the sync server, gateway and web app together, and the app
+shows a retrying "read model unavailable" screen if the sync server is missing.
 
 ## Current state (what works end-to-end)
 
@@ -46,8 +34,8 @@ read model that is live across tabs, devices and workspace members:
 browser (Svelte 5 + bits-ui)
   ── passkey sign-in ──▶ Better Auth (in-process, doc 16) ──▶ session cookie
   ── HTTP: create/list sessions ($cookie) ────────▶ gateway
-  ── WS:  attributed command (prompt) ───────────▶ mailbox → authorize() → SessionRuntime → pi
-  ◀─ WS:  streaming events (text/tool/lifecycle)
+  ── HTTP: attributed command (prompt) ──────────▶ mailbox → authorize() → SessionRuntime → pi
+     (no socket: every effect comes back through the Jazz read model)
                                                │ committed entries →
                                                ├─▶ SQLite (canonical, doc 04) ── lazy rehydration
                                                └─▶ JazzProjector ──▶ jazz-tools server
@@ -125,13 +113,13 @@ without socket fan-out.
 ```bash
 bun install
 bun run dev             # server (:8787) + web (:5173), no Jazz
-bun run dev:jazz        # sync (:4200) + server + web, Jazz read model on (3 processes)
+bun run dev             # sync (:4200) + server (:8787) + web (:5173) — the whole stack
 
-# NOTE: after ANY @akko/schema change you must fully restart dev:jazz — the in-memory
+# NOTE: after ANY @akko/schema change you must fully restart `bun run dev` — the in-memory
 # sync server keeps its old schema catalogue and dev:server does not auto-restart (doc 14).
 
 # verbose diagnostics (fish: prefix inline, no `env` needed)
-AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev:jazz
+AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev
 
 # inspect what is actually stored in a running sync server (doc 14):
 bun run jazz:probe <sessionId> [jwt]   # reads AS BACKEND (policy bypassed) and AS USER
@@ -241,11 +229,17 @@ retiring ~800 lines of read-path machinery (`conversation.ts`, `client.svelte.ts
    queried by `sessionId`). *Still deferred:* session **rename** — the `rename` verb
    exists in `CommandVerb` but has no implementation or UI; it is a write feature, not a
    read-path concern.
-3. **Move commands to HTTP**, delete the WS + reducer + event folding. The `● connected`
-   indicator becomes Jazz's connection state. Least reversible — before doing it, measure:
-   two tabs on one session, a throttled network, and rows/sec written per turn (write
-   amplification at the 40ms flush). The `jazzId` field on `SessionSummary` and
-   `projectionId()` on the projector are vestigial and go with this step.
+3. ~~**Move commands to HTTP**, delete the WS + reducer + event folding~~ — **done.**
+   `POST /api/sessions/:id/commands` is the entire write path; the actor is derived from
+   the session cookie server-side. Deleted: `connection.ts` (per-socket fan-out),
+   `conversation.ts` (the event reducer), `MessageList.svelte` (the second render path),
+   the `ClientMessage`/`ServerMessage` wire types, the `/ws` route and the Vite WS proxy —
+   ~800 lines net. `AkkoClient` is now write-only. The vestigial `jazzId`/`projectionId()`
+   went with it. **Gate results:** write amplification bounded (~24 writes/s, capped by
+   the 40ms flush regardless of token rate); two tabs sync flawlessly; reconnect after a
+   mid-turn offline period converges. Throttling via DevTools proved to be a non-test —
+   it does not apply to WebSocket traffic or to loopback, so the offline/reconnect test
+   is what actually cleared this step.
 4. **Presence/typing + per-message attribution** — cheap once everything is a Jazz table
    (the history endpoint already returns `authorId`).
 
@@ -254,7 +248,7 @@ non-obvious behaviours (below). Making Jazz load-bearing for everything means an
 regression takes down the whole UI, so the WS is retired **last** and the `Projector` seam
 (doc 04) is kept so a fallback is a config flip, not a rewrite.
 
-**C. Core features not yet built**
+### C. Core features not yet built
 5. **`ModelRouter`** (doc 05): ~~string resolver first~~ **slice 1 done** — `AkkoModelRouter`
    (`resolveModelString` delegating to pi's matcher + `catalog`), `GET /api/models`, a
    per-session model persisted on `SessionRef.model` (create with `model`, live change via
@@ -307,7 +301,7 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
   4. **`CatalogueWriteDenied` in the browser console is benign.** The client re-publishes
      an already-deployed schema and is refused because catalogue writes are admin-only.
      It is a `WARN`, not a read failure — it cost several rounds as a red herring.
-- **Schema changes need a full `dev:jazz` restart** — the in-memory sync server keeps its
+- **Schema changes need a full `bun run dev` restart** — the in-memory sync server keeps its
   old catalogue and `dev:server` doesn't auto-restart (doc 14).
 - **Local-first read latency:** a fresh one-shot Jazz query returns empty until sync
   completes; the browser reads reactively via `QuerySubscription` (doc 14). Transient

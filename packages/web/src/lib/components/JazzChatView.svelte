@@ -20,4 +20,4 @@
   });
 </script>
 
-<ChatView {client} {onmenu} jazzReady={true} {session} />
+<ChatView {client} {onmenu} {session} />

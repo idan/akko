@@ -30,7 +30,7 @@ stays live across tabs and devices.
 durability + rehydration, a canonical history endpoint, model routing (string resolver +
 catalog), passkey-auth plumbing (membership store + role policy), the Jazz projection
 (history backfill, session metadata, live streaming) and its workspace read-ACL, a live pi
-prompt and a **live WebSocket round-trip** (`AKKO_LIVE=1`). The Svelte frontend adds
+prompt end-to-end over HTTP (`AKKO_LIVE=1`). The Svelte frontend adds
 **34 jsdom unit tests** (via vitest + `@testing-library/svelte`) and **12 Storybook browser
 tests** (each story's `play` run under Playwright via `@storybook/addon-vitest`), plus
 **Storybook 10** for designing components in isolation. The web app type-checks
@@ -38,21 +38,23 @@ tests** (each story's `play` run under Playwright via `@storybook/addon-vitest`)
 
 ## Run it
 
-One command brings up the whole dev stack. Two variants:
+One command brings up the whole dev stack — sync server, gateway and web app:
 
 ```bash
 bun install
-bun run dev        # server (:8787) + web (:5173)                  — no Jazz projection
-bun run dev:jazz   # sync (:4200) + server + web, Jazz projection on — all 3 processes
+bun run dev        # sync (:4200) + server (:8787) + web (:5173) — all 3 processes
 # open http://localhost:5173
 ```
 
-`dev:jazz` uses `concurrently` and a small `scripts/wait-port.mjs` gate so the backend
+Jazz is the **only** read model (doc 15), so the sync server is not optional: without it
+the app has nothing to render and shows a retrying "read model unavailable" screen.
+
+`dev` uses `concurrently` and a small `scripts/wait-port.mjs` gate so the backend
 waits for the standalone Jazz server to be listening before it deploys its schema. The
 individual processes are still available if you want separate terminals:
 `bun run dev:sync`, `bun run dev:server`, `bun run dev:web`.
 
-> **After any `@akko/schema` change, fully restart `dev:jazz`** (Ctrl-C, rerun). The
+> **After any `@akko/schema` change, fully restart `bun run dev`** (Ctrl-C, rerun). The
 > in-memory sync server keeps its old schema catalogue and `dev:server` doesn't
 > auto-restart (doc 14). Note the Jazz store is disposable: a restart wipes all projected
 > rows, and the projector **backfills** a session's history from canonical SQLite when it
@@ -65,59 +67,28 @@ Design components in isolation (optional, separate dev server):
 bun --filter '@akko/web' storybook   # Storybook 10 on :6006
 ```
 
-### Why is Jazz opt-in (`VITE_JAZZ`)?
+### Why does Jazz run as a separate process?
 
-Jazz is **not the source of truth** — SQLite is (doc 04). The app is fully functional
-without it: the live chat streams over the WebSocket and renders from the conversation
-reducer, and sessions persist/rehydrate from SQLite. Jazz (doc 14) is a *synced
-read-model* — the backend projects the session list, finalized messages, and the in-flight
-turn (thinking + streaming text) into relational tables the browser queries reactively.
+Jazz is **not the source of truth** — SQLite is (doc 04). It is a *disposable projection*
+of canonical state: the backend projects the session list, finalized messages and the
+in-flight turn (thinking + streaming text) into relational tables the browser queries
+reactively. Wipe the Jazz store and the projector rebuilds it from SQLite.
 
-So there genuinely are two modes, and each side is gated independently:
+It is, however, the **only read model** (doc 15). The WebSocket, the client-side event
+reducer and the second render path are gone; the browser POSTs commands over HTTP and
+observes every effect through Jazz, which is what gives cross-tab/device/member sync for
+free. So the sync server is a hard dependency of the frontend, and both sides are wired
+by `bun run dev`:
 
-- **Backend** enables the projector only when `JAZZ_SYNC` + `JAZZ_APP_ID` +
-  `JAZZ_BACKEND_SECRET` are set (otherwise it logs `jazz: disabled`).
-- **Frontend** is a static Vite bundle, so it reads a build-time flag,
-  **`VITE_JAZZ=1`** (exposed as `import.meta.env.VITE_JAZZ`). Only then does it fetch a
-  Better Auth JWT, create the Jazz client, wrap the app in `JazzSvelteProvider`, and
-  render from the read model. Without a running sync server that setup would fail, so it
-  must be opt-in.
+- **Backend** enables the projector when `JAZZ_SYNC` + `JAZZ_APP_ID` +
+  `JAZZ_BACKEND_SECRET` are set (otherwise it logs `jazz: disabled` and projects nothing).
+- **Frontend** fetches a Better Auth JWT, creates the Jazz client, and wraps the app in
+  `JazzSvelteProvider`. If the sync server is unreachable it shows a retrying
+  "read model unavailable" screen rather than a blank app.
 
-Jazz is kept optional on purpose: `jazz-tools` is still `2.0.0-alpha` (pinned, expect
-breaking changes), and it needs a third process + secrets — too much for the everyday
-loop. **Making Jazz the sole read model is in progress** — see the unify plan in doc 15
-(step 1, the reactive session list, is done).
-
-**No `.env` is required** — `dev`/`dev:jazz` work with zero config, and model credentials
-come from pi's agent dir (`~/.pi/agent/auth.json`), configured via pi itself. If you'd
-rather not inline the vars (or you're pointing at real infra), copy
-[`.env.example`](.env.example) to a git-ignored `.env`; a single root `.env` serves both
-the backend (Bun auto-loads it) and the frontend (Vite reads `VITE_*` via `envDir`).
-
-### Jazz projection — what `dev:jazz` wires up
-
-`dev:jazz` is the one-command form of the three-process flow (verified end-to-end: a
-real prompt streams over the WS, the backend projects the finalized user + assistant
-messages into the standalone Jazz server, and they are queryable there):
-
-```bash
-# 1) standalone Jazz server (in-memory, app id fixed for dev, local-first auth on)
-bun run dev:sync
-
-# 2) backend: deploys schema+policies on boot, then projects finalized messages
-JAZZ_SYNC=http://localhost:4200 \
-  JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf \
-  JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin \
-  bun run dev:server
-
-# 3) frontend: renders from the Jazz read model (opt-in)
-VITE_JAZZ=1 bun run dev:web
-# with VITE_JAZZ=1 the read model IS the view (no toggle); without it the app
-# renders from the WebSocket reducer instead
-#
-# verbose diagnostics (fish/bash): AKKO_JAZZ_DEBUG=1 VITE_JAZZ_DEBUG=1 bun run dev:jazz
-# inspect the sync server:          bun run jazz:probe <sessionId> [jwt]
-```
+Worth knowing: `jazz-tools` is still `2.0.0-alpha` (pinned, expect breaking changes), and
+doc 15 lists the alpha gotchas that cost real debugging time — delete-is-a-tombstone, the
+browser needing `driver: memory`, and the benign `CatalogueWriteDenied` warning.
 
 ## Test & check
 

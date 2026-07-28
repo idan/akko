@@ -148,8 +148,8 @@ session-facing view over `NodeDirectory`.
    `@akko/schema` `messages` / `sessions` / `activity` tables with a workspace read-ACL,
    backend `JazzProjector` (finalized messages, session metadata, in-flight
    thinking/streaming, plus history **backfill** from canonical), and frontend
-   `QuerySubscription` views (opt-in via `VITE_JAZZ`). Verified live across two browser
-   tabs. Bundle ~82 KB gzipped. Next: make Jazz the sole read model (doc 15 unify plan).
+   `QuerySubscription` views. Verified live across two browser tabs. Bundle ~82 KB
+   gzipped. **Now the sole read model** — the WS + reducer are deleted (doc 15, step 3).
 9. ✅ **Auth** — Better Auth in-process, passkeys only, workspace memberships +
    `RoleBasedPolicy` (doc 16).
 10. Later: subagents, container isolation, `MemoryProvider` + `SearchIndex`,

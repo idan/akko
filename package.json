@@ -2,15 +2,16 @@
   "name": "akko",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "engines": {
     "bun": ">=1.3.0"
   },
   "//": "Runtime: Bun (see docs/architecture/11-runtime-evaluation.md). Deno remains a verified fallback; the only runtime-coupled seam is the SQLite driver behind ConversationStore (packages/core/src/sqlite.ts).",
   "scripts": {
     "typecheck": "tsc -p packages/core/tsconfig.json",
-    "dev": "concurrently -k -n server,web -c blue,magenta \"bun run dev:server\" \"bun scripts/wait-port.mjs 8787 && bun run dev:web\"",
-    "dev:jazz": "concurrently -k -n sync,server,web -c yellow,blue,magenta \"bun run dev:sync\" \"bun scripts/wait-port.mjs 4200 && JAZZ_SYNC=http://localhost:4200 JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin bun run dev:server\" \"bun scripts/wait-port.mjs 8787 && VITE_JAZZ=1 bun run dev:web\"",
+    "dev": "concurrently -k -n sync,server,web -c yellow,blue,magenta \"bun run dev:sync\" \"bun scripts/wait-port.mjs 4200 && JAZZ_SYNC=http://localhost:4200 JAZZ_APP_ID=e0c77d7c-fc80-5775-8a1d-7f74d66410bf JAZZ_BACKEND_SECRET=akko-dev-backend JAZZ_ADMIN_SECRET=akko-dev-admin bun run dev:server\" \"bun scripts/wait-port.mjs 8787 && bun run dev:web\"",
     "dev:server": "bun run packages/server/src/main.ts",
     "dev:web": "bun run --filter '@akko/web' dev",
     "dev:sync": "bunx jazz-tools@alpha server e0c77d7c-fc80-5775-8a1d-7f74d66410bf --port 4200 --in-memory --jwks-url http://localhost:8787/api/auth/jwks --backend-secret akko-dev-backend --admin-secret akko-dev-admin",
