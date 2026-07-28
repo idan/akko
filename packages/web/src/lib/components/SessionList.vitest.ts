@@ -16,7 +16,7 @@ describe("SessionList", () => {
     });
 
     expect(screen.getByText("First")).toBeInTheDocument();
-    const active = container.querySelector(".session.active");
+    const active = container.querySelector('[aria-current="true"]');
     expect(active?.textContent?.trim()).toBe("Second");
   });
 

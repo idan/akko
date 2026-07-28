@@ -45,8 +45,8 @@ describe("JazzMessageList", () => {
 
     expect(screen.getByText("hi")).toBeInTheDocument();
     expect(screen.getByText("hello back")).toBeInTheDocument();
-    expect(container.querySelector(".msg.user")).not.toBeNull();
-    expect(container.querySelector(".msg.assistant")).not.toBeNull();
+    expect(container.querySelector('[data-role="user"]')).not.toBeNull();
+    expect(container.querySelector('[data-role="assistant"]')).not.toBeNull();
   });
 
   test("shows the empty state when there are no rows", () => {
@@ -67,6 +67,6 @@ describe("JazzMessageList", () => {
     messageRows.current = [{ id: "r1", role: "user", text: "hi" }];
     activityRows.current = [{ id: "act_s1", kind: "thinking", text: "" }];
     const { container } = render(JazzMessageList, { sessionId: "s1" });
-    expect(container.querySelector(".bubble.thinking")).not.toBeNull();
+    expect(container.querySelector("[data-thinking]")).not.toBeNull();
   });
 });

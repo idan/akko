@@ -20,7 +20,11 @@ const config: StorybookConfig = {
   },
   async viteFinal(cfg) {
     const { mergeConfig } = await import("vite");
+    const { default: tailwindcss } = await import("@tailwindcss/vite");
     return mergeConfig(cfg, {
+      // Explicit rather than inherited: Storybook composes its own Vite config, and
+      // without the plugin every utility class in a story silently renders unstyled.
+      plugins: [tailwindcss()],
       resolve: {
         alias: {
           "jazz-tools/svelte": fileURLToPath(new URL("./mocks/jazz-svelte.ts", import.meta.url)),

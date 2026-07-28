@@ -2,6 +2,7 @@
   import { QuerySubscription } from "jazz-tools/svelte";
   import { app } from "@akko/schema";
   import { JAZZ_DEBUG } from "../config.ts";
+  import MessageBubble from "./MessageBubble.svelte";
 
   let { sessionId }: { sessionId: string } = $props();
 
@@ -38,29 +39,19 @@
   });
 </script>
 
-<div class="messages" bind:this={container}>
+<div class="flex flex-1 flex-col gap-2.5 overflow-y-auto p-4" bind:this={container}>
   {#each rows.current ?? [] as m (m.id)}
-    <div class="msg {m.role}">
-      <div class="bubble">{m.text}</div>
-    </div>
+    <MessageBubble role={m.role} text={m.text} />
   {/each}
   {#if live?.userText}
-    <div class="msg user">
-      <div class="bubble">{live.userText}</div>
-    </div>
+    <MessageBubble role="user" text={live.userText} />
   {/if}
   {#if live?.kind === "streaming"}
-    <div class="msg assistant">
-      <div class="bubble">{live.text}<span class="cursor">▋</span></div>
-    </div>
+    <MessageBubble role="assistant" text={live.text} streaming />
   {:else if live?.kind === "thinking"}
-    <div class="msg assistant">
-      <div class="bubble thinking" role="status" aria-label="Assistant is thinking">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      </div>
-    </div>
+    <MessageBubble role="assistant" thinking />
   {/if}
   {#if (rows.current ?? []).length === 0 && !live}
-    <p class="empty">No messages yet.</p>
+    <p class="px-3 py-2 text-muted">No messages yet.</p>
   {/if}
 </div>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConversationState } from "../conversation.ts";
+  import MessageBubble from "./MessageBubble.svelte";
 
   let { conversation }: { conversation: ConversationState } = $props();
 
@@ -18,19 +19,11 @@
   });
 </script>
 
-<div class="messages" bind:this={container}>
+<div class="flex flex-1 flex-col gap-2.5 overflow-y-auto p-4" bind:this={container}>
   {#each conversation.messages as m (m.id)}
-    <div class="msg {m.role}">
-      <div class="bubble">
-        {m.text}{#if m.streaming}<span class="cursor">▋</span>{/if}
-      </div>
-    </div>
+    <MessageBubble role={m.role} text={m.text} streaming={m.streaming} />
   {/each}
   {#if conversation.awaiting}
-    <div class="msg assistant">
-      <div class="bubble thinking" role="status" aria-label="Assistant is thinking">
-        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
-      </div>
-    </div>
+    <MessageBubble role="assistant" thinking />
   {/if}
 </div>

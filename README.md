@@ -2,7 +2,7 @@
 
 An opinionated, minimalistic personal agentic system built on top of the
 [pi](https://pi.dev) coding agent, with a first-party responsive web frontend
-(Svelte 5 + bits-ui) and multiuser/multiplayer-capable design.
+(Svelte 5 + bits-ui + Tailwind) and multiuser/multiplayer-capable design.
 
 - **Runtime:** Bun (see [`docs/architecture/11-runtime-evaluation.md`](docs/architecture/11-runtime-evaluation.md)).
   Deno is a verified fallback; the only runtime-coupled seam is the SQLite driver
@@ -157,5 +157,5 @@ packages/runtime/    concrete implementations (@akko/runtime)
 packages/protocol/   shared WS/HTTP wire types (@akko/protocol)
 packages/schema/     Jazz 2.0 relational schema (@akko/schema)
 packages/server/     WebSocket + HTTP gateway + Jazz projector + dev entry (@akko/server)
-packages/web/        Svelte 5 + bits-ui frontend (@akko/web)
+packages/web/        Svelte 5 + bits-ui + Tailwind v4 frontend (@akko/web)
 ```

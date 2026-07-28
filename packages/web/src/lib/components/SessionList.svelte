@@ -16,22 +16,30 @@
   } = $props();
 </script>
 
-<div class="list">
-  <header class="list-head">
-    <h1>Akko</h1>
-    <Button.Root class="btn primary" onclick={oncreate}>New</Button.Root>
+<div class="flex h-full flex-col gap-2 p-3">
+  <header class="flex items-center justify-between">
+    <h1 class="m-0 text-lg">Akko</h1>
+    <Button.Root class="btn btn-primary" onclick={oncreate}>New</Button.Root>
   </header>
-  <hr class="sep" />
-  <nav class="sessions">
+  <hr class="h-px border-0 bg-border" />
+  <!-- min-h-0 is load-bearing: without it this flex child refuses to shrink, the list
+       never scrolls internally and the page scrolls instead (see App.svelte). -->
+  <nav class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto">
     {#each sessions as s (s.id)}
-      <button class="session" class:active={activeId === s.id} onclick={() => onselect(s.id)}>
+      <button
+        class="w-full truncate rounded-[10px] border-0 bg-transparent px-3 py-2.5 text-left
+               text-text hover:bg-panel-2
+               aria-[current=true]:bg-panel-2 aria-[current=true]:outline aria-[current=true]:outline-border"
+        aria-current={activeId === s.id}
+        onclick={() => onselect(s.id)}
+      >
         {s.title ?? "Untitled"}
       </button>
     {:else}
-      <p class="empty">No sessions yet</p>
+      <p class="px-3 py-2 text-muted">No sessions yet</p>
     {/each}
   </nav>
-  <footer class="status" class:online={connected}>
+  <footer class="pt-2 text-xs {connected ? 'text-online' : 'text-muted'}">
     {connected ? "● connected" : "○ offline"}
   </footer>
 </div>

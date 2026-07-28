@@ -23,12 +23,19 @@
   }
 </script>
 
-<div class="chat">
-  <header class="chat-head">
-    <button class="menu" onclick={onmenu} aria-label="Toggle sessions">☰</button>
-    <h2>{active?.title ?? (client.activeSessionId ? "Session" : "Akko")}</h2>
+<div class="flex h-[100dvh] min-w-0 flex-1 flex-col">
+  <header class="flex items-center gap-2.5 border-b border-border bg-panel px-4 py-3">
+    <!-- Only a one-pane concern: at pane width and up both panes are visible. -->
+    <button class="border-0 bg-transparent text-xl text-text pane:hidden" onclick={onmenu} aria-label="Toggle sessions">☰</button>
+    <h2 class="m-0 truncate text-base">{active?.title ?? (client.activeSessionId ? "Session" : "Akko")}</h2>
     {#if client.activeSessionId && client.models.length > 0}
-      <select class="model" aria-label="Model" value={active?.model ?? ""} onchange={onModelChange}>
+      <select
+        class="ml-auto max-w-[200px] rounded-lg border border-border bg-panel-2 px-2 py-1
+               font-[inherit] text-[13px] text-text"
+        aria-label="Model"
+        value={active?.model ?? ""}
+        onchange={onModelChange}
+      >
         {#if !active?.model}<option value="" disabled>Model…</option>{/if}
         {#each client.models as m (m.provider + "/" + m.id)}
           <option value={`${m.provider}/${m.id}`}>{m.name}</option>
@@ -47,10 +54,10 @@
     {/if}
     <Composer onsend={(t) => client.sendPrompt(t)} />
   {:else}
-    <div class="placeholder">Create or select a session to begin.</div>
+    <div class="grid flex-1 place-items-center text-muted">Create or select a session to begin.</div>
   {/if}
 
   {#if client.error}
-    <div class="error" role="alert">{client.error}</div>
+    <div class="border-t border-border px-4 py-2 text-danger" role="alert">{client.error}</div>
   {/if}
 </div>

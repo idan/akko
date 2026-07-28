@@ -96,9 +96,17 @@
 </script>
 
 {#snippet shell(c: AkkoClient)}
-  <div class="app" class:sidebar-open={sidebarOpen}>
-    <aside class="sidebar">
-      <div class="list-wrap">
+  <!-- One pane below `pane`, two above. `sidebarOpen` only decides which pane shows on
+       narrow screens; at pane width and up both are always visible. -->
+  <div class="grid h-[100dvh] grid-cols-1 pane:grid-cols-[280px_1fr]">
+    <!-- overflow-hidden + min-h-0 below keep scrolling *inside* the list. Losing that
+         chain (e.g. by making this `block`) makes the page scroll instead, which reads
+         as "selecting a session does nothing" on mobile. -->
+    <aside
+      class="min-w-0 flex-col overflow-hidden border-r border-border bg-panel pane:flex
+             {sidebarOpen ? 'flex' : 'hidden'}"
+    >
+      <div class="flex min-h-0 flex-1 flex-col">
         {#if jazzClient}
           <!-- Session list straight off the Jazz read model: live across tabs/devices. -->
           <JazzSessionList
@@ -118,12 +126,17 @@
           />
         {/if}
       </div>
-      <div class="account">
-        <span class="who" title={user?.email}>{user?.name}</span>
-        <button class="signout" onclick={logout}>Sign out</button>
+      <div class="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-2.5 text-[0.85rem]">
+        <span class="min-w-0 truncate text-muted" title={user?.email}>{user?.name}</span>
+        <button
+          class="shrink-0 cursor-pointer rounded-md border border-border bg-transparent px-2.5 py-1 text-xs text-muted hover:text-text"
+          onclick={logout}
+        >
+          Sign out
+        </button>
       </div>
     </aside>
-    <main class="main">
+    <main class="min-w-0 pane:flex {sidebarOpen ? 'hidden' : 'flex'}">
       {#if jazzClient}
         <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
       {:else}
@@ -134,7 +147,7 @@
 {/snippet}
 
 {#if user === undefined}
-  <div class="loading">Loading…</div>
+  <div class="grid min-h-screen place-items-center text-muted">Loading…</div>
 {:else if !user || !client}
   <Auth onAuthed={refreshSession} />
 {:else if jazzClient}
@@ -145,46 +158,3 @@
   {@render shell(client)}
 {/if}
 
-<style>
-  .loading {
-    display: grid;
-    place-items: center;
-    min-height: 100vh;
-    color: var(--muted, #9a9a9a);
-  }
-  .account {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.6rem 0.75rem;
-    border-top: 1px solid var(--border, #2a2a2a);
-    font-size: 0.85rem;
-  }
-  .sidebar {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-  }
-  .list-wrap {
-    flex: 1;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-  }
-  .who {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--muted, #9a9a9a);
-  }
-  .signout {
-    background: none;
-    border: 1px solid var(--border, #2a2a2a);
-    border-radius: 6px;
-    color: inherit;
-    padding: 0.3rem 0.6rem;
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-</style>

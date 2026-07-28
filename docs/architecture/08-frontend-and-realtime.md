@@ -2,6 +2,12 @@
 
 ## Shape
 
+- **Styling is Tailwind v4** (`@tailwindcss/vite`), with the palette and the one-pane
+  breakpoint declared as `@theme` tokens in `packages/web/src/app.css` — so `--color-panel`
+  becomes `bg-panel` and the 720px pane split becomes the named `pane:` variant. bits-ui
+  stays for headless behaviour; its primitives take a class string, and the shared button
+  skin is a `@utility btn`. Components carry no scoped `<style>` blocks: styles live at
+  the markup they apply to, which is what stops a class from being silently unstyled.
 - **Svelte 5 + bits-ui**, a single first-party web app. **Responsive; must work on
   mobile.**
 - Talks to the backend over a **WebSocket** (events + commands) with HTTP for
