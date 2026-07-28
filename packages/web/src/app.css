@@ -30,7 +30,28 @@ html, body {
 }
 
 /* ---- Sidebar ---- */
-.sidebar { border-right: 1px solid var(--border); background: var(--panel); min-width: 0; }
+/* Column so the list scrolls internally and the account bar stays pinned. Without this
+   the height chain breaks (.list height:100% resolves against an auto-height wrapper),
+   .sessions never scrolls, and the *page* scrolls instead — which on mobile leaves you
+   staring at empty space below the 100dvh chat pane after selecting a session. */
+.sidebar {
+  border-right: 1px solid var(--border); background: var(--panel); min-width: 0;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.list-wrap { flex: 1; min-height: 0; }
+.account {
+  flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border);
+}
+.account .who {
+  font-size: 13px; color: var(--muted); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.account .signout {
+  flex-shrink: 0; background: transparent; color: var(--muted); border: 1px solid var(--border);
+  border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer;
+}
+.account .signout:hover { color: var(--text); }
 .list { display: flex; flex-direction: column; height: 100%; padding: 12px; gap: 8px; }
 .list-head { display: flex; align-items: center; justify-content: space-between; }
 .list-head h1 { font-size: 18px; margin: 0; }
@@ -111,7 +132,9 @@ html, body {
   .app { grid-template-columns: 1fr; }
   .sidebar { display: none; }
   .main { display: flex; }
-  .app.sidebar-open .sidebar { display: block; }
+  /* flex, not block: .sidebar is a flex column, and `display: block` would break the
+     height chain again and re-scroll the page. */
+  .app.sidebar-open .sidebar { display: flex; }
   .app.sidebar-open .main { display: none; }
   .menu { display: block; }
 }
