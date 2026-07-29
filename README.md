@@ -54,6 +54,10 @@ waits for the standalone Jazz server to be listening before it deploys its schem
 individual processes are still available if you want separate terminals:
 `bun run dev:sync`, `bun run dev:server`, `bun run dev:web`.
 
+> The gateway runs under `bun --watch`, so backend source edits restart it automatically
+> (a restart drops liveness only — sessions rehydrate from SQLite on next use, per doc 03).
+> An in-flight turn *is* lost, so avoid editing mid-turn.
+>
 > **After any `@akko/schema` change, fully restart `bun run dev`** (Ctrl-C, rerun). The
 > in-memory sync server keeps its old schema catalogue and `dev:server` doesn't
 > auto-restart (doc 14). Note the Jazz store is disposable: a restart wipes all projected

@@ -326,6 +326,10 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
 
 ## Known gaps & caveats
 
+- **`dev:server` runs under `bun --watch`.** Before that it did not, which made backend
+  fixes appear not to work: the running gateway kept serving the old code and the only
+  clue was the process start time predating the change. Schema changes still need a full
+  `bun run dev` restart (the in-memory sync server keeps its catalogue).
 - **Every pi-session construction must go through `#buildSession`.** `spawn_subagent` was
   once attached only on create, so any *rehydrated* session silently lost it — while the
   model, seeing earlier successful calls in its own transcript, kept calling a tool that
