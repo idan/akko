@@ -106,6 +106,34 @@ A subagent is spawned in-process via `createAgentSession` with its own `model`,
 - The parent session's tool that spawns a subagent posts to the child's mailbox and
   later reads its result — same primitives, no special path.
 
+### Status — built (slice 1)
+
+`spawnSubagent()` is implemented in `AkkoSessionRegistry`, and the model reaches it
+through a `spawn_subagent` pi tool registered on conversations. Decisions worth carrying:
+
+- **Blocking.** One tool call in, one answer out; no orphan lifecycle to manage. Because
+  the child is a real session, moving to async/fleet later changes *who delivers the
+  result*, not the model underneath.
+- **Batch-shaped.** `tasks` is a list and entries run concurrently up to the cap. Three
+  rounds of prompt-tuning could not get a model to reliably issue N separate calls — it
+  enumerated the units correctly, then reasoned itself into a single "handle all of them
+  at once" call. Making the batch the native shape means the parallel path is the *easy*
+  path rather than one requiring discipline on every turn. The general lesson: when a
+  model reliably reasons its way around guidance, the interface is wrong, not the wording.
+- **Attribution to the initiating human**, not a service principal, so workspace
+  membership and `RoleBasedPolicy` apply unchanged; provenance is `parentSessionId`.
+- **Nesting is impossible by construction**: children are built without the tool, so depth
+  is enforced by absent capability rather than a counter the model could argue with. The
+  limiter's depth check is a backstop.
+- **Caps** (`AKKO_SUBAGENT_MAX_*`, default 3 per parent / 8 global) are resolved through a
+  function, so per-provider limits — a locally-served model may only manage 2–3 concurrent
+  calls — slot in without touching callers.
+- **Partial failure is a partial result**: one failed unit must not discard the others;
+  only an all-failed batch throws.
+
+Subagents are filtered out of the session list (they are sessions, but not conversations).
+Roadmap and remaining work: doc 15, item C6.
+
 We take the **agent-type `.md` convention** (frontmatter: model, thinkingLevel,
 tools, systemPromptMode, inheritSkills, defaultContext) as inspiration from
 `@tintinweb/pi-subagents` and `pi-subagents`, but implement our own thin

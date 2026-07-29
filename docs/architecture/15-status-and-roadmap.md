@@ -270,15 +270,19 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    blocking `spawn_subagent` pi tool so the *model* can delegate. Design decisions:
    **blocking** (one tool call in, one answer out — async/fleet is a later change to who
    delivers the result, not to the model); attribution to the **initiating human** rather
-   than a service principal, so membership + role checks apply unchanged; caps **refuse
-   rather than queue** (a queue plus blocking spawns is a resource deadlock the moment
-   depth > 1, and an LLM caller can read a refusal and adapt); nesting prevented by
-   **withholding the tool** from children rather than by a counter. Subagents are filtered
+   than a service principal, so membership + role checks apply unchanged; nesting prevented
+   by **withholding the tool** from children rather than by a counter. Caps never queue
+   *across* sessions — a cross-session queue plus blocking spawns is a resource deadlock
+   the moment depth > 1 — but within one batch a unit waits (bounded) for its own slot,
+   which is safe because subagents cannot spawn, so every slot holder is doing work that
+   finishes. Subagents are filtered
    out of the session list (data is all there — doc 15 C8 if we later render them nested).
    `spawn_subagent` takes a **list** of tasks and runs them in parallel: three rounds of
    prompt-tuning failed to make a model reliably issue N separate calls (it enumerated
    correctly, then reasoned itself into one "handle all of them at once" call), so the
-   parallel path is now the *easy* path rather than the disciplined one.
+   parallel path is now the *easy* path rather than the disciplined one. **Measured:** one
+   call with 19 tasks produced 19 children, 123s of child work in 43.6s wall clock — a
+   2.8x speedup, essentially the theoretical maximum for the default cap of 3.
    **Next (slice 2):** agent-type `.md` frontmatter (model/tools/systemPromptMode),
    `stopSubagent`, streaming child progress into the parent's tool call via `onUpdate`,
    and **per-provider concurrency caps** — a locally-served model may only manage 2–3

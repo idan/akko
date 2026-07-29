@@ -25,6 +25,13 @@ You can **sign up with a passkey, chat with a real agent, and watch it stream** 
 session list, in-flight state and message history rendering from a synced read model that
 stays live across tabs and devices.
 
+The agent can also **delegate**: `spawn_subagent` takes a list of independent tasks and
+runs them as parallel child sessions, each with its own fresh context window, so broad
+work ("summarize every doc in this project") doesn't flood the conversation. Subagents are
+ordinary sessions (doc 03) — same registry, mailbox and authorization — so they persist,
+project and rehydrate like anything else. Concurrency is capped
+(`AKKO_SUBAGENT_MAX_PER_PARENT`, default 3) and they cannot nest.
+
 **Verified end-to-end on Bun** (`bun test`): 86 tests green across `@akko/runtime`,
 `@akko/server`, and `@akko/web` (backend + pure reducer), including SQLite (FTS5)
 durability + rehydration, a canonical history endpoint, model routing (string resolver +
