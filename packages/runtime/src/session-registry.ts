@@ -36,7 +36,7 @@ import { AkkoSessionRuntime, type SessionDriver } from "./session-runtime.ts";
 import { InMemorySessionIndex, type SessionIndex } from "./session-index.ts";
 import type { MembershipStore } from "./membership-store.ts";
 import type { SessionProjector } from "./session-projector.ts";
-import { limitsFromEnv, SubagentLimiter, type SubagentLimits } from "./subagent-limits.ts";
+import { limitsFromEnv, providerOf, SubagentLimiter, type SubagentLimits } from "./subagent-limits.ts";
 import { createSpawnSubagentTool } from "./subagent-tool.ts";
 import { newSessionId } from "./ids.ts";
 
@@ -326,6 +326,10 @@ export class AkkoSessionRegistry implements SessionRegistry {
               workspaceId: wr.workspace.id,
               actorId: forSession.ownerId,
               eventBus: this.#deps.eventBus,
+              // Resolved per call: the parent's model can change mid-session, and a
+              // per-batch override takes precedence.
+              getProvider: (override) =>
+                providerOf(override ?? this.#index.getRef(forSession.id)?.model),
             }),
           ]
         : undefined;

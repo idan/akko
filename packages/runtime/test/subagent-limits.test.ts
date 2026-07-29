@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { DEFAULT_SUBAGENT_LIMITS, limitsFromEnv, SubagentLimiter } from "../src/subagent-limits.ts";
+import {
+  DEFAULT_SUBAGENT_LIMITS,
+  limitsFromEnv,
+  parseProviderLimits,
+  providerOf,
+  SubagentLimiter,
+} from "../src/subagent-limits.ts";
 
 describe("SubagentLimiter", () => {
   test("admits up to the per-parent cap, then refuses with an actionable reason", () => {
@@ -75,9 +81,73 @@ describe("SubagentLimiter", () => {
   });
 });
 
+describe("per-provider limits", () => {
+  const limits = { perParent: 5, global: 20, maxDepth: 1, perProvider: { ollama: 2 } };
+
+  test("caps a constrained provider across ALL sessions, not per parent", () => {
+    // The constraint is shared hardware: a local model manages 2 concurrent calls no
+    // matter who asked, so unlike perParent this must not reset per session.
+    const limiter = new SubagentLimiter(limits);
+    expect(limiter.admit("p1", 1, "ollama").allowed).toBe(true);
+    expect(limiter.admit("p2", 1, "ollama").allowed).toBe(true);
+
+    const third = limiter.admit("p3", 1, "ollama");
+    expect(third.allowed).toBe(false);
+    if (!third.allowed) expect(third.reason).toContain('provider "ollama" (2)');
+  });
+
+  test("providers without a configured limit are unaffected", () => {
+    const limiter = new SubagentLimiter(limits);
+    for (let i = 0; i < 5; i++) expect(limiter.admit(`p${i}`, 1, "anthropic").allowed).toBe(true);
+    expect(limiter.runningForProvider("anthropic")).toBe(5);
+    expect(limiter.runningForProvider("ollama")).toBe(0);
+  });
+
+  test("releasing frees the provider's capacity too", () => {
+    const limiter = new SubagentLimiter(limits);
+    const a = limiter.admit("p1", 1, "ollama");
+    limiter.admit("p2", 1, "ollama");
+    expect(limiter.admit("p3", 1, "ollama").allowed).toBe(false);
+
+    a.release?.();
+    expect(limiter.runningForProvider("ollama")).toBe(1);
+    expect(limiter.admit("p3", 1, "ollama").allowed).toBe(true);
+  });
+});
+
+describe("parseProviderLimits", () => {
+  test("parses a comma-separated list", () => {
+    expect(parseProviderLimits("ollama=2,anthropic=8")).toEqual({ ollama: 2, anthropic: 8 });
+  });
+
+  test("ignores malformed entries rather than failing or unlimiting", () => {
+    expect(parseProviderLimits("ollama=lots,anthropic=8")).toEqual({ anthropic: 8 });
+    expect(parseProviderLimits("ollama=0")).toBeUndefined(); // 0 would mean "never spawn"
+    expect(parseProviderLimits("")).toBeUndefined();
+    expect(parseProviderLimits(undefined)).toBeUndefined();
+  });
+});
+
+describe("providerOf", () => {
+  test("takes the provider half of provider/id", () => {
+    expect(providerOf("anthropic/claude-sonnet-4-5")).toBe("anthropic");
+    expect(providerOf("ollama/llama3.1:70b")).toBe("ollama");
+  });
+  test("is undefined when there is no provider to read", () => {
+    expect(providerOf(undefined)).toBeUndefined();
+    expect(providerOf("bare-model-name")).toBeUndefined();
+  });
+});
+
 describe("limitsFromEnv", () => {
   test("defaults when unset", () => {
-    expect(limitsFromEnv({})).toEqual(DEFAULT_SUBAGENT_LIMITS);
+    expect(limitsFromEnv({})).toEqual({ ...DEFAULT_SUBAGENT_LIMITS, perProvider: undefined });
+  });
+
+  test("reads per-provider caps", () => {
+    expect(limitsFromEnv({ AKKO_SUBAGENT_MAX_PER_PROVIDER: "ollama=2" }).perProvider).toEqual({
+      ollama: 2,
+    });
   });
 
   test("reads overrides", () => {
@@ -87,7 +157,7 @@ describe("limitsFromEnv", () => {
         AKKO_SUBAGENT_MAX_GLOBAL: "4",
         AKKO_SUBAGENT_MAX_DEPTH: "2",
       }),
-    ).toEqual({ perParent: 1, global: 4, maxDepth: 2 });
+    ).toEqual({ perParent: 1, global: 4, maxDepth: 2, perProvider: undefined });
   });
 
   test("ignores garbage rather than disabling the cap", () => {

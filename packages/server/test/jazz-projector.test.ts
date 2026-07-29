@@ -46,6 +46,26 @@ const userMsg = (text: string) => ({ role: "user", content: text });
 const assistantMsg = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
 
 describe("JazzProjector (Jazz 2.0 relational)", () => {
+  test("progress events refine the live tool label", async () => {
+    // The parent's activity row is the only thing a browser sees during a blocking
+    // batch, so progress has to reach it or a multi-minute run looks stalled.
+    const bus = new InMemoryEventBus();
+    const projector = new JazzProjector(db, { eventBus: bus });
+    const r = ref("ses_prog", "Progress");
+    projector.ensureSession(r);
+
+    bus.publish({ type: "progress", sessionId: r.id, label: "19 subagents", done: 7, total: 19 });
+
+    let rows: Array<{ kind?: string; text?: string }> = [];
+    for (let i = 0; i < 25; i++) {
+      rows = await db.all(app.activity.where({ sessionId: "ses_prog" }));
+      if (rows[0]?.kind === "tool") break;
+      await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows[0]?.kind).toBe("tool");
+    expect(rows[0]?.text).toBe("19 subagents — 7/19 done");
+  });
+
   test("a tools-only assistant message becomes a tool row, not an empty bubble", async () => {
     // The subagent regression: an assistant message whose content is only tool calls has
     // no text, so it used to project as a row with text "" — one empty chat bubble per

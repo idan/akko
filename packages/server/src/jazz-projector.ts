@@ -192,6 +192,15 @@ export class JazzProjector implements SessionProjector {
   /** Derive the ephemeral `activity` row from the live pi event stream. Never throws. */
   #onLiveEvent(sessionId: SessionId, event: DomainEvent): void {
     try {
+      // Progress from a long-running tool (doc 03). Refines the label written at
+      // `toolcall_end` so a multi-minute batch shows movement instead of a static count.
+      if (event.type === "progress") {
+        const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+        t.toolLabel = `${event.label} — ${event.done}/${event.total} done`;
+        this.#turn.set(sessionId, t);
+        this.#writeActivity(sessionId, "tool");
+        return;
+      }
       if (event.type !== "pi") return;
       const pi = (event as { event?: PiEvent }).event;
       if (!pi) return;

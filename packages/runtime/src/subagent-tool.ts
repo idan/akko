@@ -42,6 +42,11 @@ export interface SpawnSubagentToolDeps {
   runChild?: (child: AkkoSessionRuntime, prompt: string, signal?: AbortSignal) => Promise<string>;
   /** How long one unit waits for a concurrency slot before giving up. Test seam. */
   slotWaitMs?: number;
+  /**
+   * Provider the child will run on, for the per-provider cap. A function because the
+   * parent's model can change mid-session (`setModel`), and a per-call override wins.
+   */
+  getProvider?: (modelOverride?: string) => string | undefined;
 }
 
 /** Build the tool-result shape pi expects. */
@@ -75,6 +80,8 @@ const parameters = Type.Object({
 interface TaskSpec {
   task: string;
   title?: string;
+  /** Batch-level model override, copied onto each unit so spawns stay uniform. */
+  model?: string;
 }
 
 /** One finished unit of work, in the order it was requested. */
@@ -163,10 +170,13 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
    * spawn (depth 1), so every slot holder is doing real work and will finish. The wait is
    * also bounded, so a saturated system degrades to a per-item error rather than a hang.
    */
-  async function acquireSlot(signal?: AbortSignal): Promise<{ release?: () => void } | string> {
+  async function acquireSlot(
+    provider: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<{ release?: () => void } | string> {
     const deadline = Date.now() + (deps.slotWaitMs ?? SLOT_WAIT_TIMEOUT_MS);
     for (;;) {
-      const admission = deps.limiter.admit(deps.parentSessionId, 1);
+      const admission = deps.limiter.admit(deps.parentSessionId, 1, provider);
       if (admission.allowed) return admission;
       if (signal?.aborted) return "aborted before a subagent slot became free";
       if (Date.now() >= deadline) return admission.reason;
@@ -175,8 +185,13 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
   }
 
   /** Run one unit of work end to end. Never throws: a failure is that unit's result. */
-  async function runOne(spec: TaskSpec, index: number, signal?: AbortSignal): Promise<TaskOutcome> {
-    const slot = await acquireSlot(signal);
+  async function runOne(
+    spec: TaskSpec,
+    index: number,
+    provider: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<TaskOutcome> {
+    const slot = await acquireSlot(provider, signal);
     if (typeof slot === "string") {
       return { index, title: spec.title, output: `not started: ${slot}`, failed: true };
     }
@@ -188,6 +203,7 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
         actorId: deps.actorId,
         prompt: spec.task,
         title: spec.title,
+        model: spec.model,
       });
       childId = child.ref.id;
       const output = await run(child, spec.task, signal);
@@ -252,9 +268,32 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
       const tasks = (params.tasks ?? []).filter((t) => t?.task?.trim());
       if (tasks.length === 0) throw new Error("spawn_subagent: at least one task is required.");
 
+      // Report progress: a batch can hold the turn for minutes without emitting a token,
+      // so without this the UI sits on a static "19 tasks" label and looks stalled.
+      const label = tasks.length === 1 ? (tasks[0]!.title ?? "subagent") : `${tasks.length} subagents`;
+      let done = 0;
+      const report = () =>
+        deps.eventBus.publish({
+          type: "progress",
+          sessionId: deps.parentSessionId,
+          label,
+          done,
+          total: tasks.length,
+        });
+      report();
+
       // Bounded concurrency is enforced by the limiter via acquireSlot, so simply start
       // them all: the slots throttle, and results come back in request order.
-      const outcomes = await Promise.all(tasks.map((t, i) => runOne(t, i, signal)));
+      const provider = deps.getProvider?.(params.model);
+      const outcomes = await Promise.all(
+        tasks.map((t, i) =>
+          runOne({ ...t, model: params.model }, i, provider, signal).then((outcome) => {
+            done += 1;
+            report();
+            return outcome;
+          }),
+        ),
+      );
 
       const body = outcomes
         .sort((a, b) => a.index - b.index)

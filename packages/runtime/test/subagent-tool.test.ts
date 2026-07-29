@@ -159,6 +159,52 @@ describe("spawn_subagent batching", () => {
     expect(limiter.running(PARENT)).toBe(0); // every slot returned
   });
 
+  test("reports progress on the bus so a long batch shows movement", async () => {
+    // A batch can hold the turn for minutes emitting no tokens; without progress the UI
+    // sits on a static label and looks stalled.
+    const bus = new InMemoryEventBus();
+    const seen: Array<{ done: number; total: number; label: string }> = [];
+    bus.subscribe(PARENT, (e) => {
+      if (e.type === "progress") seen.push({ done: e.done, total: e.total, label: e.label });
+    });
+    const tool = createSpawnSubagentTool({
+      registry: fakeRegistry() as never,
+      limiter: new SubagentLimiter({ perParent: 3, global: 8, maxDepth: 1 }),
+      parentSessionId: PARENT,
+      workspaceId: WORKSPACE,
+      actorId: ACTOR,
+      eventBus: bus,
+      runChild: async () => "ok",
+    });
+
+    await tool.execute("t1", { tasks: [{ task: "a" }, { task: "b" }, { task: "c" }] }, undefined);
+
+    // An initial 0/3 so the UI updates the moment the batch starts, then one per unit.
+    expect(seen[0]).toEqual({ done: 0, total: 3, label: "3 subagents" });
+    expect(seen.at(-1)).toEqual({ done: 3, total: 3, label: "3 subagents" });
+    expect(seen).toHaveLength(4);
+  });
+
+  test("a single-task batch is labelled by its title, not a count", async () => {
+    const bus = new InMemoryEventBus();
+    const seen: string[] = [];
+    bus.subscribe(PARENT, (e) => {
+      if (e.type === "progress") seen.push(e.label);
+    });
+    const tool = createSpawnSubagentTool({
+      registry: fakeRegistry() as never,
+      limiter: new SubagentLimiter({ perParent: 3, global: 8, maxDepth: 1 }),
+      parentSessionId: PARENT,
+      workspaceId: WORKSPACE,
+      actorId: ACTOR,
+      eventBus: bus,
+      runChild: async () => "ok",
+    });
+
+    await tool.execute("t1", { tasks: [{ task: "a", title: "Docs audit" }] }, undefined);
+    expect(seen[0]).toBe("Docs audit");
+  });
+
   test("one failing unit does not discard the others", async () => {
     const registry = fakeRegistry();
     const tool = createSpawnSubagentTool({

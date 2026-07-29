@@ -283,11 +283,12 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    parallel path is now the *easy* path rather than the disciplined one. **Measured:** one
    call with 19 tasks produced 19 children, 123s of child work in 43.6s wall clock — a
    2.8x speedup, essentially the theoretical maximum for the default cap of 3.
-   **Next (slice 2):** agent-type `.md` frontmatter (model/tools/systemPromptMode),
-   `stopSubagent`, streaming child progress into the parent's tool call via `onUpdate`,
-   and **per-provider concurrency caps** — a locally-served model may only manage 2–3
-   concurrent calls where a hosted provider is happy with far more (`SubagentLimiter`
-   already resolves limits through a function to make this a non-breaking change).
+   **Slice 2 (in progress):** ~~live progress~~ **done** — the tool publishes
+   `{ type: "progress" }` on the event bus and the projector folds it into the parent's
+   activity row ("19 subagents — 7/19 done"); ~~per-provider caps~~ **done** —
+   `AKKO_SUBAGENT_MAX_PER_PROVIDER=ollama=2`, applied across all sessions since the
+   constraint is shared hardware. **Remaining:** agent-type `.md` frontmatter
+   (model/tools/systemPromptMode) and `stopSubagent`.
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design

@@ -29,7 +29,14 @@ export type DomainEvent =
   /** Mailbox/queue changed — who is queued to drive the session (doc 03/08). */
   | { type: "queue"; sessionId: SessionId; pending: Array<{ actorId: PrincipalId; verb: string }> }
   /** Session metadata changed (title, model, host, lifecycle). */
-  | { type: "session"; sessionId: SessionId; patch: Record<string, unknown> };
+  | { type: "session"; sessionId: SessionId; patch: Record<string, unknown> }
+  /**
+   * Long-running work reporting progress against a session (doc 03). A blocking tool can
+   * occupy a turn for minutes while emitting no tokens — a batch of subagents being the
+   * motivating case — so it says how far along it is rather than leaving the UI on a
+   * static label. Transient: it drives the ephemeral activity row, never durable state.
+   */
+  | { type: "progress"; sessionId: SessionId; label: string; done: number; total: number };
 
 /**
  * A consumer of the committed-entry stream for one session. `ConversationStore` and

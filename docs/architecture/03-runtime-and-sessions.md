@@ -125,9 +125,14 @@ through a `spawn_subagent` pi tool registered on conversations. Decisions worth 
 - **Nesting is impossible by construction**: children are built without the tool, so depth
   is enforced by absent capability rather than a counter the model could argue with. The
   limiter's depth check is a backstop.
-- **Caps** (`AKKO_SUBAGENT_MAX_*`, default 3 per parent / 8 global) are resolved through a
-  function, so per-provider limits — a locally-served model may only manage 2–3 concurrent
-  calls — slot in without touching callers.
+- **Caps** (`AKKO_SUBAGENT_MAX_*`, default 3 per parent / 8 global). `AKKO_SUBAGENT_MAX_PER_PROVIDER`
+  (`ollama=2,anthropic=8`) adds a per-provider limit applied **across all sessions**,
+  because that constraint models shared hardware: a locally-served model manages 2–3
+  concurrent calls no matter who asked. Provider is derived from the child's
+  `provider/id` model, resolved per call so `setModel` and per-batch overrides are honoured.
+- **Progress is reported on the event bus** (`{ type: "progress" }`), which the projector
+  folds into the parent's live activity row. A blocking batch can hold a turn for minutes
+  emitting no tokens, so without it the UI sits on a static label and looks stalled.
 - **Partial failure is a partial result**: one failed unit must not discard the others;
   only an all-failed batch throws.
 
