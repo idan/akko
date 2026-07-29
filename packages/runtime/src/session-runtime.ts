@@ -66,6 +66,8 @@ export interface AkkoSessionRuntimeOptions {
   resolveModel?: (input: string) => Model<Api> | string;
   /** Called after a successful model change, with the canonical `provider/id`. */
   onModelChanged?: (modelRef: string) => void;
+  /** Called after a successful rename so the index + read model can be updated. */
+  onRenamed?: (title: string) => void;
 }
 
 export class AkkoSessionRuntime implements SessionRuntime {
@@ -76,6 +78,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
   readonly #entrySinks: EntrySink[];
   readonly #resolveModel?: (input: string) => Model<Api> | string;
   readonly #onModelChanged?: (modelRef: string) => void;
+  readonly #onRenamed?: (title: string) => void;
   #unsubscribe?: () => void;
   #mailbox!: Mailbox;
 
@@ -93,6 +96,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
     this.#entrySinks = options.entrySinks ?? [];
     this.#resolveModel = options.resolveModel;
     this.#onModelChanged = options.onModelChanged;
+    this.#onRenamed = options.onRenamed;
     this.#persistedCount = options.persistedCount ?? 0;
     this.#unsubscribe = this.#driver.subscribe((event) => {
       this.#eventBus.publish({ type: "pi", sessionId: this.ref.id, event });
@@ -131,6 +135,8 @@ export class AkkoSessionRuntime implements SessionRuntime {
         return this.#applySetModel((command.args as { model: string }).model);
       case "abort":
         return this.#driver.abort();
+      case "rename":
+        return this.#applyRename((command.args as { title?: string }).title ?? "");
       default:
         throw new Error(`verb not implemented in slice 1: ${command.verb}`);
     }
@@ -160,6 +166,19 @@ export class AkkoSessionRuntime implements SessionRuntime {
     this.#onModelChanged?.(ref);
     // Broadcast to every subscribed client (cross-tab) via the generic session patch.
     this.#eventBus.publish({ type: "session", sessionId: this.ref.id, patch: { model: ref } });
+  }
+
+  /**
+   * Rename the session. Purely metadata: it never touches the pi driver, but it goes
+   * through the mailbox like any other command so it is attributed and authorized on the
+   * same path (doc 03).
+   */
+  async #applyRename(input: string): Promise<void> {
+    const title = input.trim();
+    if (!title) throw new Error("rename: missing title");
+    if (title.length > 200) throw new Error("rename: title too long");
+    this.#onRenamed?.(title);
+    this.#eventBus.publish({ type: "session", sessionId: this.ref.id, patch: { title } });
   }
 
   /** Serialize captures so overlapping turn/agent_end events cannot double-persist. */

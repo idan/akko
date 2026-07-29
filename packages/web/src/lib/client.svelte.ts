@@ -109,6 +109,15 @@ export class AkkoClient {
     this.sessions = this.sessions.map((s) => (s.id === sessionId ? { ...s, model } : s));
   }
 
+  /** Rename a session (doc 03). The new title arrives back via the read model. */
+  rename(sessionId: string, title: string): void {
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    void this.command(sessionId, "rename", { title: trimmed });
+    // Local echo for the HTTP-fetched copy; the projection is the real source.
+    this.sessions = this.sessions.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s));
+  }
+
   sendPrompt(text: string): void {
     const sid = this.activeSessionId;
     const trimmed = text.trim();

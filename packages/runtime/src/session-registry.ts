@@ -257,6 +257,13 @@ export class AkkoSessionRegistry implements SessionRegistry {
       persistedCount,
       entrySinks: projector ? [projector, touchSink] : [touchSink],
       resolveModel: (input) => this.#router.resolveModelString(input, modelRuntime),
+      onRenamed: (title) => {
+        const cur = this.#index.getRef(ref.id);
+        if (!cur) return;
+        const next = { ...cur, title, updatedAt: Date.now() };
+        this.#index.upsertRef(next);
+        this.#deps.projector?.projectSessionMeta?.(next);
+      },
       onModelChanged: (modelId) => {
         const cur = this.#index.getRef(ref.id);
         if (!cur) return;

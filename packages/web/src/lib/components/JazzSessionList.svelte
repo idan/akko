@@ -4,11 +4,12 @@
   import { JAZZ_DEBUG } from "../config.ts";
   import SessionList from "./SessionList.svelte";
 
-  let { workspaceId, activeId = null, connected = false, onselect, oncreate }: {
+  let { workspaceId, activeId = null, connected = false, onselect, oncreate, onrename }: {
     workspaceId: string;
     activeId?: string | null;
     connected?: boolean;
     onselect: (id: string) => void;
+    onrename?: (id: string, title: string) => void;
     oncreate: () => void;
   } = $props();
 
@@ -29,4 +30,4 @@
   });
 </script>
 
-<SessionList {sessions} {activeId} {connected} {onselect} {oncreate} />
+<SessionList {sessions} {activeId} {connected} {onselect} {oncreate} {onrename} />

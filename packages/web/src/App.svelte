@@ -135,6 +135,7 @@
           connected={true}
           onselect={selectSession}
           oncreate={() => void c.createSession()}
+          onrename={(id, title) => c.rename(id, title)}
         />
       </div>
       <div class="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-2.5 text-[0.85rem]">

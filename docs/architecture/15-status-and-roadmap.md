@@ -15,6 +15,10 @@ per-socket event fan-out are deleted (~800 lines): the browser POSTs commands to
 measurements passed — write amplification is bounded (~24 writes/s while streaming), two
 tabs on one session stay in sync, and **reconnect converges** after going offline mid-turn.
 
+Recently closed: **Jazz token refresh** (an expired JWT used to mean a frozen UI, since
+step 3 removed the fallback read path) and **session rename** (the `rename` verb now has
+a handler plus inline editing in the list).
+
 **Next action: unify step 4** — presence/typing + per-message attribution, now cheap
 because everything is already a Jazz table (see the plan below). Or pick from
 [C. Core features](#c-core-features-not-yet-built): **subagents** (`spawnSubagent` is

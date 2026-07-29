@@ -67,6 +67,7 @@ function cmd(actor: string, verb: CommandVerb, args: unknown = {}): Command {
 function makeRuntime(opts?: {
   resolveModel?: (input: string) => any;
   onModelChanged?: (ref: string) => void;
+  onRenamed?: (title: string) => void;
 }) {
   const driver = new FakeDriver();
   const bus = new InMemoryEventBus();
@@ -85,6 +86,7 @@ function makeRuntime(opts?: {
     eventBus: bus,
     conversationStore,
     resolveModel: opts?.resolveModel,
+    onRenamed: opts?.onRenamed,
     onModelChanged: opts?.onModelChanged,
   });
   const mailbox = new AkkoMailbox({
@@ -163,6 +165,33 @@ describe("AkkoSessionRuntime", () => {
     const res = await mailbox.post(cmd("alice", "setModel", { model: "bogus" }));
     expect(res.accepted).toBe(false);
     expect(res.reason).toContain("no match");
+  });
+
+  test("rename persists the new title and broadcasts it, without touching the driver", async () => {
+    const renamed: string[] = [];
+    const { mailbox, driver, bus } = makeRuntime({ onRenamed: (t) => renamed.push(t) });
+    const patches: string[] = [];
+    bus.subscribe("s1" as SessionId, (e) => {
+      if (e.type === "session") patches.push((e.patch as { title?: string }).title ?? "");
+    });
+
+    const res = await mailbox.post(cmd("alice", "rename", { title: "  Roadmap review  " }));
+
+    expect(res.accepted).toBe(true);
+    expect(renamed).toEqual(["Roadmap review"]); // trimmed
+    expect(patches).toEqual(["Roadmap review"]); // every observer is told
+    expect(driver.calls).toEqual([]); // metadata only — no pi involvement
+  });
+
+  test("rename rejects an empty or oversized title", async () => {
+    const { mailbox } = makeRuntime();
+    const empty = await mailbox.post(cmd("alice", "rename", { title: "   " }));
+    expect(empty.accepted).toBe(false);
+    expect(empty.reason).toContain("missing title");
+
+    const huge = await mailbox.post(cmd("alice", "rename", { title: "x".repeat(201) }));
+    expect(huge.accepted).toBe(false);
+    expect(huge.reason).toContain("too long");
   });
 
   test("unimplemented verbs reject with a clear message", async () => {

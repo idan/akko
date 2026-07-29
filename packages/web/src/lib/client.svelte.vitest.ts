@@ -125,6 +125,27 @@ describe("AkkoClient", () => {
     expect(client.error).toBe("not a member of this workspace");
   });
 
+  test("rename posts the command and echoes the new title locally", async () => {
+    const client = makeClient();
+    const fn = stubFetch({ result: { accepted: true } });
+    client.sessions = [{ id: "s1", title: "Old" } as never];
+
+    client.rename("s1", "  New title  ");
+
+    expect(client.sessions[0]).toMatchObject({ title: "New title" });
+    await vi.waitFor(() => expect(commandCalls(fn)).toHaveLength(1));
+    const [url, init] = commandCalls(fn)[0]!;
+    expect(url).toBe("/api/sessions/s1/commands");
+    expect(JSON.parse(String(init.body))).toEqual({ verb: "rename", args: { title: "New title" } });
+  });
+
+  test("rename ignores an empty title", () => {
+    const client = makeClient();
+    const fn = stubFetch({ result: { accepted: true } });
+    client.rename("s1", "   ");
+    expect(commandCalls(fn)).toHaveLength(0);
+  });
+
   test("setModel posts the command and echoes locally so the picker doesn't snap back", async () => {
     const client = makeClient();
     const fn = stubFetch({ result: { accepted: true } });
