@@ -85,7 +85,7 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
 
     bus.publish({ type: "progress", sessionId: r.id, label: "19 subagents", done: 7, total: 19 });
 
-    let rows: Array<{ kind?: string; text?: string }> = [];
+    let rows: Array<{ kind?: string; text?: string; toolLabel?: string }> = [];
     for (let i = 0; i < 25; i++) {
       rows = await db.all(app.activity.where({ sessionId: "ses_prog" }));
       if (rows[0]?.kind === "tool") break;
@@ -93,6 +93,49 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
     }
     expect(rows[0]?.kind).toBe("tool");
     expect(rows[0]?.toolLabel).toBe("19 subagents — 7/19 done");
+  });
+
+  test("a message that both speaks and calls tools projects BOTH, in order", async () => {
+    // Observed in session 28: "I'll help you find the docs" + a bash call. The tool call
+    // was dropped from the transcript because text and tools were treated as
+    // alternatives, so reloading showed the sentence followed by nothing.
+    const projector = new JazzProjector(db);
+    const r = ref("ses_both", "Both");
+    projector.ensureSession(r);
+
+    await projector.onEntry(r.id, entry("b1", {
+      role: "assistant",
+      content: [
+        { type: "text", text: "I'll locate the docs." },
+        { type: "toolCall", name: "bash", arguments: { command: "find . -name '*.md'" } },
+      ],
+    }));
+
+    let rows: Array<{ role?: string; text?: string }> = [];
+    for (let i = 0; i < 25 && rows.length < 2; i++) {
+      rows = await db.all(app.messages.where({ sessionId: "ses_both" }).orderBy("createdAt"));
+      if (rows.length < 2) await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ role: "assistant", text: "I'll locate the docs." });
+    expect(rows[1]).toMatchObject({ role: "tool", text: "bash: find . -name '*.md'" });
+
+    // Two rows from one entry must still be idempotent: a backfill re-runs every entry,
+    // and the tool row's id is derived, not generated.
+    await projector.onEntry(r.id, entry("b1", {
+      role: "assistant",
+      content: [
+        { type: "text", text: "I'll locate the docs." },
+        { type: "toolCall", name: "bash", arguments: { command: "find . -name '*.md'" } },
+      ],
+    }));
+    let after: unknown[] = [];
+    for (let i = 0; i < 25; i++) {
+      await new Promise((res) => setTimeout(res, 80));
+      after = await db.all(app.messages.where({ sessionId: "ses_both" }).orderBy("createdAt"));
+      if (after.length >= 2) break;
+    }
+    expect(after).toHaveLength(2); // re-projection updated the same two rows, not four
   });
 
   test("a tools-only assistant message becomes a tool row, not an empty bubble", async () => {

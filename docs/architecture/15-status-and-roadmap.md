@@ -339,6 +339,12 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
   fixes appear not to work: the running gateway kept serving the old code and the only
   clue was the process start time predating the change. Schema changes still need a full
   `bun run dev` restart (the in-memory sync server keeps its catalogue).
+- **Text and tool calls are independent, not alternatives.** One assistant message can
+  both speak and call tools ("I'll locate the docs" + `bash`), so it projects **two** rows
+  — the text, then a `role: "tool"` record at `ts + 1ms` so it sorts after. Treating them
+  as either/or silently dropped the tool call from the transcript whenever the model also
+  spoke; only the transient live chip showed it. The same either/or mistake appears in the
+  `activity` row below, which is worth noticing as a pattern.
 - **The `activity` row carries concurrent live states, not one.** A turn commonly streams
   a sentence *and then* calls a tool, so `text` (streamed) and `toolLabel` are separate
   columns and the UI renders both. Overloading one column made the sentence disappear when

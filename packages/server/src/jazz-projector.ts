@@ -172,28 +172,41 @@ export class JazzProjector implements SessionProjector {
     if (message.role !== "user" && message.role !== "assistant") return undefined;
 
     const text = textOfContent(message.content);
-    // An assistant message that only calls tools has no text. Projecting it verbatim
-    // produced empty chat bubbles (one per tool call — very visible with subagents), so
-    // render it as what it is: a record of tool use. `role` is a free-form string column,
-    // so "tool" needs no schema change.
-    const tools = text ? "" : toolCallsOfContent(message.content);
+    // A message can say something *and* call tools ("I'll look for the docs" + bash), so
+    // these are independent, not alternatives. Treating them as alternatives dropped the
+    // tool call from the transcript whenever the model also spoke — the live chip was the
+    // only trace, and it vanished as soon as the next thing started.
+    const tools = toolCallsOfContent(message.content);
     if (!text && !tools) return message.role; // nothing to show; don't create an empty row
 
+    const workspaceId = this.#workspaceOf.get(sessionId) ?? "";
+    const authorId = entry.actorId ?? "";
     try {
-      // Deterministic id keyed on the canonical entry => idempotent, so re-projecting
+      // Deterministic ids keyed on the canonical entry => idempotent, so re-projecting
       // (backfill after a projection loss) can never duplicate rows.
-      this.#db.upsert(
-        app.messages,
-        {
-          sessionId,
-          workspaceId: this.#workspaceOf.get(sessionId) ?? "",
-          role: tools ? "tool" : message.role,
-          text: text || tools,
-          createdAt: new Date(entry.ts),
-          authorId: entry.actorId ?? "",
-        },
-        { id: messageRowId(sessionId, entry.id) },
-      );
+      if (text) {
+        this.#db.upsert(
+          app.messages,
+          { sessionId, workspaceId, role: message.role, text, createdAt: new Date(entry.ts), authorId },
+          { id: messageRowId(sessionId, entry.id) },
+        );
+      }
+      if (tools) {
+        this.#db.upsert(
+          app.messages,
+          {
+            sessionId,
+            workspaceId,
+            role: "tool",
+            text: tools,
+            // +1ms so it sorts *after* its own message's text: rows are ordered by
+            // createdAt, and a tie would order them arbitrarily.
+            createdAt: new Date(entry.ts + 1),
+            authorId,
+          },
+          { id: messageRowId(sessionId, `${entry.id}:tools`) },
+        );
+      }
     } catch (error) {
       console.error(`[jazz] failed to project message for ${sessionId}:`, error);
     }
