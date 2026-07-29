@@ -22,6 +22,7 @@ import {
   type PrincipalId,
   type SessionId,
   type SessionRef,
+  type SessionKind,
   type SessionRegistry,
   type SpawnSubagentOptions,
   type Workspace,
@@ -138,7 +139,9 @@ export class AkkoSessionRegistry implements SessionRegistry {
       const resolved = this.#router.resolveModelString(ref.model, wr.modelRuntime);
       if (typeof resolved !== "string") initialModel = resolved;
     }
-    const { session } = await this.#buildSession(wr, sessionManager, initialModel);
+    // Pass the ref's own identity/kind so a rehydrated conversation keeps exactly the
+    // tools it had when created.
+    const { session } = await this.#buildSession(wr, sessionManager, initialModel, ref);
     return this.#instantiate(ref, session, session.messages.length, wr.modelRuntime);
   }
 
@@ -169,9 +172,9 @@ export class AkkoSessionRegistry implements SessionRegistry {
       initialModel = resolved;
     }
     const { session } = await this.#buildSession(wr, sessionManager, initialModel, {
-      canSpawn: true,
-      sessionId,
+      id: sessionId,
       ownerId: input.ownerId,
+      kind: "conversation",
     });
 
     const now = Date.now();
@@ -233,7 +236,9 @@ export class AkkoSessionRegistry implements SessionRegistry {
     // absence of the capability rather than by a counter the model could talk its way
     // around (the limiter's depth check is a backstop).
     const { session } = await this.#buildSession(wr, sessionManager, initialModel, {
-      canSpawn: false,
+      id: sessionId,
+      ownerId: options.actorId,
+      kind: "subagent",
     });
 
     const now = Date.now();
@@ -295,23 +300,31 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return this.#deps.workspaceRuntimeFactory.get(workspace);
   }
 
+  /**
+   * Build the pi session for a ref. **Every** path that constructs a session goes through
+   * here — create, rehydrate and subagent-spawn — so the tool set cannot diverge between
+   * them. It did once: `spawn_subagent` was attached only on create, so any rehydrated
+   * session silently lost it while the model still saw earlier successful calls in its
+   * transcript and kept calling a tool that no longer existed.
+   */
   #buildSession(
     wr: WorkspaceRuntime,
     sessionManager: Awaited<ReturnType<ConversationStore["create"]>>,
-    model?: Model<Api>,
-    opts: { canSpawn?: boolean; sessionId?: SessionId; ownerId?: PrincipalId } = {},
+    model: Model<Api> | undefined,
+    forSession: { id: SessionId; ownerId: PrincipalId; kind: SessionKind },
   ) {
-    // Only conversations get the delegation tool; children are spawned with
-    // `canSpawn: false` so nesting is impossible by construction (doc 03).
+    // Conversations may delegate; subagents may not, which is what makes nesting
+    // impossible by construction (doc 03). Derived from `kind` rather than passed in, so
+    // the rule lives in one place.
     const customTools =
-      opts.canSpawn && opts.sessionId && opts.ownerId
+      forSession.kind === "conversation"
         ? [
             createSpawnSubagentTool({
               registry: this,
               limiter: this.#subagents,
-              parentSessionId: opts.sessionId,
+              parentSessionId: forSession.id,
               workspaceId: wr.workspace.id,
-              actorId: opts.ownerId,
+              actorId: forSession.ownerId,
               eventBus: this.#deps.eventBus,
             }),
           ]

@@ -326,6 +326,13 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
 
 ## Known gaps & caveats
 
+- **Every pi-session construction must go through `#buildSession`.** `spawn_subagent` was
+  once attached only on create, so any *rehydrated* session silently lost it — while the
+  model, seeing earlier successful calls in its own transcript, kept calling a tool that
+  no longer existed ("Tool spawn_subagent not found"). Create/rehydrate divergence is
+  invisible until a session goes cold, which is why the tool set is now derived from
+  `SessionRef.kind` inside one function rather than passed in by each caller.
+
 - **jazz-tools is alpha** (`2.0.0-alpha.x`) — pinned; expect breaking changes on bumps.
   **Four non-obvious behaviours cost real debugging time** (all fixed, all now covered by
   tests — details in doc 14):

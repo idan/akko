@@ -101,6 +101,35 @@ describe("spawnSubagent", () => {
     db.close();
   });
 
+  test("a REHYDRATED conversation keeps spawn_subagent; a rehydrated subagent still lacks it", async () => {
+    // Regression: the tool was attached only on create, so any cold session lost it.
+    // The model kept calling it — earlier successful calls were still in its transcript —
+    // and got "Tool spawn_subagent not found" for the rest of the session's life.
+    const { registry, workspace, owner, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "work",
+    });
+    const parentId = parent.ref.id;
+    const childId = child.ref.id;
+
+    // Simulate a restart: drop all liveness, keep durable state.
+    await registry.evict(parentId);
+    await registry.evict(childId);
+    expect(registry.isLive(parentId)).toBe(false);
+
+    const rehydratedParent = await registry.get(parentId);
+    const rehydratedChild = await registry.get(childId);
+
+    expect(rehydratedParent.session.getActiveToolNames()).toContain("spawn_subagent");
+    // ...and rehydration must not accidentally *grant* it to a subagent.
+    expect(rehydratedChild.session.getActiveToolNames()).not.toContain("spawn_subagent");
+    db.close();
+  });
+
   test("rejects a parent that doesn't exist or lives in another workspace", async () => {
     const { registry, workspace, owner, db } = makeStack();
 
