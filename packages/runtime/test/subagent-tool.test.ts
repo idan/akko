@@ -110,6 +110,30 @@ describe("spawn_subagent tool", () => {
   });
 });
 
+describe("spawn_subagent prompting", () => {
+  test("ships guidelines telling the model when to delegate", () => {
+    // Without these the tool is merely *listed*: the model sees it exists but is given no
+    // reason to prefer it, and does the work inline instead. pi injects promptGuidelines
+    // into the system prompt's Guidelines section.
+    const { tool } = makeTool();
+    expect(tool.promptGuidelines?.length).toBeGreaterThan(0);
+    const guidance = (tool.promptGuidelines ?? []).join(" ");
+    expect(guidance).toMatch(/independent/i); // the trigger condition
+    expect(guidance).toMatch(/parallel/i); // and that several calls can run at once
+  });
+
+  test("the snippet does not repeat the tool name (pi already prefixes it)", () => {
+    const { tool } = makeTool();
+    expect(tool.promptSnippet?.startsWith("spawn_subagent")).toBe(false);
+  });
+
+  test("the description tells the model the task must be self-contained", () => {
+    const { tool } = makeTool();
+    expect(tool.description).toMatch(/self-contained/i);
+    expect(tool.description).toMatch(/cannot see this conversation/i);
+  });
+});
+
 describe("runSubagentToCompletion", () => {
   /** A child stub whose mailbox emits a scripted pi stream on the bus. */
   function childOn(bus: InMemoryEventBus, script: () => void, accepted = true, reason?: string) {

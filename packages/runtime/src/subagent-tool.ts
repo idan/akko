@@ -131,10 +131,19 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
     label: "Spawn subagent",
     description:
       "Delegate a self-contained task to a subagent with its own fresh context window, and wait for its answer. " +
-      "Use this for work that would flood this conversation with detail you don't need to keep — searching, " +
-      "auditing many files, or exploring an approach. The subagent cannot see this conversation and cannot " +
-      "delegate further, so the task must be complete on its own.",
-    promptSnippet: "spawn_subagent: delegate a self-contained task to a fresh-context subagent",
+      "Best for work that would otherwise flood this conversation with detail you don't need to keep verbatim: " +
+      "summarizing or auditing many files, searching a large codebase, or exploring an approach. " +
+      "Call it several times in one message to run subagents in parallel — that is the fastest way to handle " +
+      "a list of independent items. The subagent cannot see this conversation and cannot delegate further, so " +
+      "the task must be complete and self-contained, and should state exactly what to return.",
+    // pi prefixes this with the tool name, so don't repeat it here.
+    promptSnippet: "delegate a self-contained task to a subagent with a fresh context window",
+    // Without these the model sees the tool listed but is given no reason to reach for it,
+    // and simply does the work inline — which is what happened in practice.
+    promptGuidelines: [
+      "When a request breaks into independent units of work (e.g. per-file summaries or audits), delegate them with spawn_subagent rather than doing each one inline — issue several calls in a single message so they run in parallel.",
+      "Prefer spawn_subagent whenever completing a task means reading a lot of material you won't need verbatim afterwards; keep this conversation for the synthesis.",
+    ],
     parameters,
     // Parallel so the model can fan out several children in one turn, bounded by the caps.
     executionMode: "parallel" as const,
