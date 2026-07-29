@@ -122,6 +122,17 @@ describe("spawn_subagent prompting", () => {
     expect(guidance).toMatch(/parallel/i); // and that several calls can run at once
   });
 
+  test("guidance says to enumerate first and scope one subagent per unit", () => {
+    // Observed failure: asked to summarize every doc, the model delegated
+    // "find all the docs and summarize each" to ONE subagent — it could not fan out
+    // because it had not enumerated the files yet. One serial child defeats the point.
+    const { tool } = makeTool();
+    const guidance = (tool.promptGuidelines ?? []).join(" ");
+    expect(guidance).toMatch(/enumerate/i);
+    expect(guidance).toMatch(/one subagent per unit/i);
+    expect(tool.description).toMatch(/ONE item/);
+  });
+
   test("the snippet does not repeat the tool name (pi already prefixes it)", () => {
     const { tool } = makeTool();
     expect(tool.promptSnippet?.startsWith("spawn_subagent")).toBe(false);
