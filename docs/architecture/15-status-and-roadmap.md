@@ -268,6 +268,24 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
 6. **Subagents** (doc 03): `spawnSubagent` is a stub; implement as first-class registry
    sessions (in-process), reuse the agent-`.md` pattern.
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
+8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
+   **archive** and **delete** do not exist as verbs at all, and both need domain design
+   before UI:
+   - *Archive* is the easy one — a flag on `SessionRef`, filtered out of the list and the
+     Jazz `sessions` query. Reversible, no data questions.
+   - *Delete* is not. It has to decide what happens to canonical SQLite entries (doc 04
+     says canonical data never lives only in Jazz — so is delete a tombstone, a soft
+     delete, or a real purge?), and Jazz row deletes are tombstones that cannot be
+     re-created under the same id (doc 14). Soft-delete is very likely the answer.
+
+   The UI question is shared: today rename is a `✎` control revealed on hover/focus, which
+   is a **desktop-first affordance** and does not scale to three actions. This app is
+   explicitly meant to work on mobile (doc 08), so the list needs a control pattern that
+   is native to touch — most likely **swipe-to-reveal actions** on a row, possibly with a
+   long-press menu, and the hover control kept as the pointer equivalent. Worth designing
+   once, when archive/delete land, rather than bolting a second affordance onto rename.
+   *(The current `✎` is at least always in the DOM and keyboard-reachable — only its
+   opacity is hover-driven — so it is usable-but-undiscoverable on touch, not broken.)*
 
 **D. Multiuser/auth**
 8. ~~**Real auth**~~ — **done, verified live** ([doc 16](./16-auth.md)): Better Auth

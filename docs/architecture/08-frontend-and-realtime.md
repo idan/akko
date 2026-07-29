@@ -65,6 +65,15 @@ backend that UI is dead weight. We reuse their **engine patterns** (SDK spawning
 fuzzy model resolution, the agent-type `.md` format) and build the *view* natively in
 Svelte against the same event stream. See doc 03 and doc 05.
 
+## Touch affordances (open question)
+
+The session list currently exposes rename via a `✎` control revealed on hover/focus. That
+is a pointer-first pattern, and the roadmap adds **archive** and **delete** to the same
+row — three actions is past what a hover reveal can carry, especially on a UI that must
+work on mobile. The likely answer is **swipe-to-reveal row actions** (plus long-press),
+with the hover control retained as the pointer equivalent; see doc 15, item C8. Deliberately
+unresolved until archive/delete exist, so the pattern is designed once for all three.
+
 ## Presence and multiplayer affordances
 
 Partly built, the rest additive (doc 02):
