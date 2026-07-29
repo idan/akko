@@ -46,6 +46,35 @@ const userMsg = (text: string) => ({ role: "user", content: text });
 const assistantMsg = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
 
 describe("JazzProjector (Jazz 2.0 relational)", () => {
+  test("a committed assistant message does not kill an in-flight tool indicator", async () => {
+    // The message that *calls* a tool commits while the tool is still running. Retiring
+    // the activity row there killed the indicator mid-flight — and for a long batch, the
+    // progress counter with it.
+    const bus = new InMemoryEventBus();
+    const projector = new JazzProjector(db, { eventBus: bus });
+    const r = ref("ses_midtool", "Mid-tool");
+    projector.ensureSession(r);
+
+    // A tool starts...
+    bus.publish({ type: "progress", sessionId: r.id, label: "3 subagents", done: 0, total: 3 });
+    // ...then the assistant message that requested it is committed.
+    await projector.onEntry(r.id, entry("a1", {
+      role: "assistant",
+      content: [{ type: "text", text: "I'll look into that." }],
+    }));
+
+    let rows: Array<{ kind?: string; text?: string; toolLabel?: string }> = [];
+    for (let i = 0; i < 25; i++) {
+      rows = await db.all(app.activity.where({ sessionId: "ses_midtool" }));
+      if (rows[0]?.kind === "tool") break;
+      await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows[0]?.kind).toBe("tool"); // still live
+    expect(rows[0]?.toolLabel).toContain("3 subagents");
+    // ...but the text is dropped, since it now lives in `messages`.
+    expect(rows[0]?.text).toBe("");
+  });
+
   test("progress events refine the live tool label", async () => {
     // The parent's activity row is the only thing a browser sees during a blocking
     // batch, so progress has to reach it or a multi-minute run looks stalled.
@@ -63,7 +92,7 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
       await new Promise((res) => setTimeout(res, 80));
     }
     expect(rows[0]?.kind).toBe("tool");
-    expect(rows[0]?.text).toBe("19 subagents — 7/19 done");
+    expect(rows[0]?.toolLabel).toBe("19 subagents — 7/19 done");
   });
 
   test("a tools-only assistant message becomes a tool row, not an empty bubble", async () => {

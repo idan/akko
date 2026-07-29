@@ -151,8 +151,19 @@ export class JazzProjector implements SessionProjector {
 
   async onEntry(sessionId: SessionId, entry: CommittedEntry): Promise<void> {
     const projected = this.#projectEntry(sessionId, entry);
-    // The finalized assistant message now lives in `messages`; retire the live bubble.
-    if (projected === "assistant") this.#clearActivity(sessionId);
+    if (projected !== "assistant") return;
+    // The finalized assistant message now lives in `messages`, so drop the live copy of
+    // its text. But a tool called by that same message may still be running — retiring the
+    // whole row here would kill the tool indicator mid-flight (and, for a long batch, the
+    // progress counter). Keep the row alive in that case, minus the now-duplicated text.
+    const t = this.#turn.get(sessionId);
+    if (t?.toolLabel) {
+      t.text = "";
+      this.#turn.set(sessionId, t);
+      this.#writeActivity(sessionId, "tool");
+      return;
+    }
+    this.#clearActivity(sessionId);
   }
 
   /** Upsert one canonical entry as a `messages` row. Returns the role, or undefined if skipped. */
@@ -270,8 +281,9 @@ export class JazzProjector implements SessionProjector {
           workspaceId: this.#workspaceOf.get(sessionId) ?? "",
           kind,
           userText: t.userText,
-          // While a tool runs there is no streaming text; show what it is doing instead.
-          text: kind === "tool" ? (t.toolLabel ?? "") : t.text,
+          // Both live at once: a turn may have streamed text *and* be running a tool.
+          text: t.text,
+          toolLabel: kind === "tool" ? (t.toolLabel ?? "") : "",
           updatedAt: new Date(),
         },
         { id: activityId(sessionId) },

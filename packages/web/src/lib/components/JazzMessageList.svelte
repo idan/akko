@@ -16,7 +16,11 @@
   let container: HTMLDivElement | undefined = $state();
   // The activity row is retired to `kind: "idle"` between turns (never deleted — Jazz
   // deletes are tombstones), so treat idle as "nothing in flight".
-  const current = $derived((activity.current ?? [])[0] as { kind?: string; userText?: string; text?: string } | undefined);
+  const current = $derived(
+    (activity.current ?? [])[0] as
+      | { kind?: string; userText?: string; text?: string; toolLabel?: string }
+      | undefined,
+  );
   const live = $derived(current && current.kind !== "idle" ? current : undefined);
 
   // Diagnostics: surface query errors + row/activity churn (VITE_JAZZ_DEBUG=1).
@@ -46,12 +50,18 @@
   {#if live?.userText}
     <MessageBubble role="user" text={live.userText} />
   {/if}
-  {#if live?.kind === "streaming"}
-    <MessageBubble role="assistant" text={live.text} streaming />
-  {:else if live?.kind === "tool"}
-    <MessageBubble role="tool" text={live.text} working />
-  {:else if live?.kind === "thinking"}
+  <!-- Streamed text and a running tool coexist: a turn often says "I'll look into X"
+       and then calls a tool. Rendering them as alternatives made the sentence disappear
+       when the tool started and reappear once the message committed. -->
+  {#if live?.kind === "thinking"}
     <MessageBubble role="assistant" thinking />
+  {:else}
+    {#if live?.text}
+      <MessageBubble role="assistant" text={live.text} streaming={live.kind === "streaming"} />
+    {/if}
+    {#if live?.kind === "tool"}
+      <MessageBubble role="tool" text={live.toolLabel ?? ""} working />
+    {/if}
   {/if}
   {#if (rows.current ?? []).length === 0 && !live}
     <p class="px-3 py-2 text-muted">No messages yet.</p>

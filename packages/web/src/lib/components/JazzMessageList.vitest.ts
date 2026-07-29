@@ -6,7 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 // returns the right fixture based on which table the query object tags.
 const { messageRows, activityRows } = vi.hoisted(() => ({
   messageRows: { current: [] as { id: string; role: string; text: string }[] },
-  activityRows: { current: [] as { id: string; kind: string; text: string }[] },
+  activityRows: { current: [] as { id: string; kind: string; text: string; toolLabel?: string }[] },
 }));
 
 vi.mock("jazz-tools/svelte", () => ({
@@ -62,11 +62,25 @@ describe("JazzMessageList", () => {
     expect(container.querySelector("[data-tool]")).not.toBeNull();
   });
 
+  test("keeps streamed text visible while a tool runs (no disappear/reappear flicker)", () => {
+    // The turn says "I'll find the docs..." and then calls a tool. These are concurrent
+    // live states, not alternatives — rendering them as alternatives made the sentence
+    // vanish the moment the tool started and reappear once the message committed.
+    messageRows.current = [];
+    activityRows.current = [
+      { id: "a1", kind: "tool", text: "I'll find the docs.", toolLabel: "spawn_subagent: 3 tasks" },
+    ];
+    render(JazzMessageList, { sessionId: "s1" });
+
+    expect(screen.getByText("I'll find the docs.")).toBeInTheDocument();
+    expect(screen.getByText("spawn_subagent: 3 tasks")).toBeInTheDocument();
+  });
+
   test("shows a live indicator while a tool is running", () => {
     // A blocking spawn_subagent can take minutes with no tokens; without this the UI
     // looks hung.
     messageRows.current = [];
-    activityRows.current = [{ id: "a1", kind: "tool", text: "spawn_subagent: Docs audit" }];
+    activityRows.current = [{ id: "a1", kind: "tool", text: "", toolLabel: "spawn_subagent: Docs audit" }];
     const { container } = render(JazzMessageList, { sessionId: "s1" });
 
     expect(screen.getByRole("status")).toHaveTextContent("spawn_subagent: Docs audit");

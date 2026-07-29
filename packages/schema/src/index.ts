@@ -51,13 +51,22 @@ export const appSchema = {
   activity: s.table({
     sessionId: s.string(),
     workspaceId: s.string(),
-    /** "thinking" | "streaming". */
+    /** "thinking" | "streaming" | "tool" | "idle". */
     kind: s.string(),
     /** The in-flight user prompt — shown immediately (canonical rows are only captured at
      * turn end), so the sender's message doesn't wait for the assistant to finish. */
     userText: s.string(),
     /** In-flight assistant text (empty while thinking). */
     text: s.string(),
+    /**
+     * Description of the tool currently running, when `kind === "tool"`.
+     *
+     * Separate from `text` on purpose: a turn often streams a sentence ("I'll find the
+     * docs...") and *then* calls a tool. Overloading one column made that sentence vanish
+     * the moment the tool started, only to reappear when the message was committed — a
+     * visible flicker. Both are live at once, so both need a home.
+     */
+    toolLabel: s.string(),
     updatedAt: s.timestamp(),
   }),
 };

@@ -339,6 +339,11 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
   fixes appear not to work: the running gateway kept serving the old code and the only
   clue was the process start time predating the change. Schema changes still need a full
   `bun run dev` restart (the in-memory sync server keeps its catalogue).
+- **The `activity` row carries concurrent live states, not one.** A turn commonly streams
+  a sentence *and then* calls a tool, so `text` (streamed) and `toolLabel` are separate
+  columns and the UI renders both. Overloading one column made the sentence disappear when
+  the tool started and reappear when the message committed — a visible flicker. Likewise
+  a committed assistant message only retires the row if no tool is still running.
 - **Every pi-session construction must go through `#buildSession`.** `spawn_subagent` was
   once attached only on create, so any *rehydrated* session silently lost it — while the
   model, seeing earlier successful calls in its own transcript, kept calling a tool that
