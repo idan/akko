@@ -4,6 +4,7 @@
   import { AkkoClient } from "./lib/client.svelte.ts";
   import { JAZZ_APP_ID, JAZZ_SYNC, JAZZ_DEBUG } from "./lib/config.ts";
   import { currentUser, signOut, getJazzToken, decodeJwtPayload, type AuthedUser } from "./lib/auth-client.ts";
+  import { startJazzTokenRefresh } from "./lib/jazz-token.ts";
   import JazzSessionList from "./lib/components/JazzSessionList.svelte";
   import JazzChatView from "./lib/components/JazzChatView.svelte";
   import Auth from "./lib/components/Auth.svelte";
@@ -25,6 +26,7 @@
   // rather than silently degrading to a blank app.
   let jazzClient = $state<JazzClient | null>(null);
   let jazzError = $state<string | null>(null);
+  let stopTokenRefresh: (() => void) | undefined;
   // Bumped to re-run the effect after a failure — the read model is load-bearing now, so
   // "give up" is not an option; keep retrying while the user waits.
   let jazzAttempt = $state(0);
@@ -56,6 +58,17 @@
           if (JAZZ_DEBUG) console.log("[jazz] connected; session:", JSON.stringify(client.session));
           jazzError = null;
           jazzClient = client;
+          // The JWT expires (15 min); Jazz is the only read model, so letting it lapse
+          // freezes the UI with nothing to fall back to (doc 16).
+          stopTokenRefresh?.();
+          stopTokenRefresh = startJazzTokenRefresh({
+            getToken: getJazzToken,
+            apply: (t) => {
+              if (JAZZ_DEBUG) console.log("[jazz] auth token refreshed");
+              client.db.updateAuthToken(t); // lives on the Db, not the svelte wrapper
+            },
+            onError: (err) => console.warn("[jazz] token refresh failed; will retry", err),
+          });
         } catch (err) {
           console.error("[jazz] client unavailable:", err);
           jazzError = `Read model unavailable at ${JAZZ_SYNC}. Is the sync server running? Retrying…`;
@@ -90,6 +103,8 @@
   }
 
   async function logout() {
+    stopTokenRefresh?.();
+    stopTokenRefresh = undefined;
     await signOut();
     client = null;
     user = null;

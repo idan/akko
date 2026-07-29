@@ -154,8 +154,14 @@ Things that work but are worth revisiting:
   the already-deployed schema; reads are unaffected; **(c)** the browser client must use
   `driver: { type: "memory" }`, or a stale OPFS/SharedWorker store silently returns zero
   rows (doc 14). EdDSA and Better Auth's `iss`/`aud` were both confirmed acceptable to the
-  sync server. Remaining watch item: **token refresh** on expiry
-  (`JazzClient.updateAuthToken(...)` is the seam; tokens are ~15 min).
+  sync server. **Token refresh is implemented** (`packages/web/src/lib/jazz-token.ts`): the JWT
+  lifetime is set explicitly to `15m`, and the browser renews a minute before expiry via
+  `client.db.updateAuthToken(...)` — note that lives on the `Db`, not the Svelte
+  `JazzClient` wrapper. It also re-checks **on `visibilitychange`**, which is the case
+  that actually matters: after a laptop sleep the timer fires late (or the token already
+  lapsed), and that is precisely when a reconnect needs a valid token. Failures retry on a
+  short delay rather than giving up — since unify step 3 an expired token is not a
+  degraded experience, it is a frozen UI with nothing to fall back to.
 
 ## Where it lives
 

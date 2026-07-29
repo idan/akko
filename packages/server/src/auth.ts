@@ -137,6 +137,10 @@ export function createAkkoAuth(deps: AkkoAuthDeps): AkkoAuth {
       }),
       jwt({
         jwt: {
+          // Explicit rather than inherited. Better Auth defaults to 15m; the browser
+          // renews a minute before expiry and on wake (see lib/jazz-token.ts), so a short
+          // life is cheap and keeps a leaked read token from being useful for long.
+          expirationTime: "15m",
           // Stamp the reader's workspace onto the JWT so the Jazz read-ACL can filter
           // projected rows by verified claim (doc 16/14). Jazz reads claims from the
           // JWT's nested `claims` object, so we return `{ claims: {...} }` (Better Auth
