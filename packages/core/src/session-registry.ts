@@ -32,7 +32,7 @@ export interface SpawnSubagentOptions {
   workspaceId: WorkspaceId;
   /** The principal on whose behalf the subagent acts (usually a service principal). */
   actorId: PrincipalId;
-  /** Agent-type name resolved from an agent `.md` definition (frontmatter). */
+  /** Agent-type name resolved from an agent `.md` definition (frontmatter, doc 03). */
   agentType?: string;
   /** Initial task/prompt for the subagent. */
   prompt: string;

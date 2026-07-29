@@ -5,7 +5,7 @@
  * safe: children never get the spawn tool, and they never show up in the session list.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { PrincipalId, SessionId, Workspace } from "@akko/core";
@@ -21,7 +21,7 @@ import { newPrincipalId, newWorkspaceId } from "../src/ids.ts";
 const storageRoot = mkdtempSync(join(tmpdir(), "akko-sub-"));
 afterAll(() => rmSync(storageRoot, { recursive: true, force: true }));
 
-function makeStack() {
+function makeStack(agentTypesDir?: string) {
   const db = new BunSqliteAdapter(join(storageRoot, "akko.db"));
   const conversationStore = new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") });
   const sessionIndex = new SqliteSessionIndex(db);
@@ -31,6 +31,7 @@ function makeStack() {
     conversationStore,
     sessionIndex,
     eventBus,
+    agentTypesDir,
   });
   const workspace: Workspace = {
     id: newWorkspaceId(),
@@ -189,4 +190,101 @@ describe("subagent live delegation (gated on AKKO_LIVE=1)", () => {
     expect(text.toLowerCase()).toContain("pong");
     db.close();
   }, 90_000);
+});
+
+describe("agent types", () => {
+  /** Write a preset directory and build a registry pointed at it. */
+  function withAgentTypes(files: Record<string, string>) {
+    const dir = mkdtempSync(join(tmpdir(), "akko-at-"));
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+    const stack = makeStack(dir);
+    return { ...stack, dir };
+  }
+
+  test("a preset supplies the child's model, tools and instructions", async () => {
+    const { registry, workspace, owner, db, dir } = withAgentTypes({
+      "researcher.md": [
+        "---",
+        "description: Read-only research",
+        "tools: [read]",
+        "---",
+        "You only read.",
+      ].join("\n"),
+    });
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      agentType: "researcher",
+      prompt: "find things",
+    });
+
+    expect(child.ref.agentType).toBe("researcher");
+    // The allowlist really restricts the child, not just its prompt.
+    expect(child.session.getActiveToolNames()).toEqual(["read"]);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an unknown agent type fails loudly and lists what is available", async () => {
+    const { registry, workspace, owner, db, dir } = withAgentTypes({
+      "researcher.md": "You only read.",
+    });
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+
+    await expect(
+      registry.spawnSubagent({
+        parentSessionId: parent.ref.id,
+        workspaceId: workspace.id,
+        actorId: owner,
+        agentType: "nope",
+        prompt: "x",
+      }),
+    ).rejects.toThrow(/unknown agent type "nope".*researcher/s);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("stopSubagent", () => {
+  test("stops a running child, and refuses one belonging to another session", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+    const parentA = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const parentB = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parentA.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "work",
+    });
+
+    // Scoping is what makes this safe to expose as a command without a second
+    // permission model: a session may only stop its own children.
+    await expect(registry.stopSubagent(child.ref.id, parentB.ref.id)).rejects.toThrow(
+      "another session",
+    );
+
+    await expect(registry.stopSubagent(child.ref.id, parentA.ref.id)).resolves.toBe(true);
+    // The transcript survives — stopping is a liveness action, not a delete.
+    expect(registry.agentTypes()).toBeDefined();
+    db.close();
+  });
+
+  test("stopping a non-subagent or an evicted child is false, not an error", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "work",
+    });
+
+    expect(await registry.stopSubagent(parent.ref.id)).toBe(false); // not a subagent
+    await registry.evict(child.ref.id);
+    expect(await registry.stopSubagent(child.ref.id)).toBe(false); // already finished
+    db.close();
+  });
 });

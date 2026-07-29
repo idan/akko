@@ -8,6 +8,7 @@
  * from the `ConversationStore`, and constructs a fresh runtime — the durable/liveness
  * split in action. `list` reads from the durable index, not just live memory.
  */
+import { join } from "node:path";
 import { createAgentSession, type ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import {
@@ -38,7 +39,8 @@ import type { MembershipStore } from "./membership-store.ts";
 import type { SessionProjector } from "./session-projector.ts";
 import { limitsFromEnv, providerOf, SubagentLimiter, type SubagentLimits } from "./subagent-limits.ts";
 import { createSpawnSubagentTool } from "./subagent-tool.ts";
-import { newSessionId } from "./ids.ts";
+import { applyAgentType, describeAgentTypes, loadAgentTypes, type AgentType } from "./agent-types.ts";
+import { newSessionId, newCommandId } from "./ids.ts";
 
 export interface AkkoSessionRegistryDeps {
   workspaceRuntimeFactory: WorkspaceRuntimeFactory;
@@ -54,6 +56,11 @@ export interface AkkoSessionRegistryDeps {
   nodeId?: string;
   /** Subagent concurrency caps (doc 03). Defaults come from the environment. */
   subagentLimits?: SubagentLimits;
+  /**
+   * Directory of agent-type `.md` presets (doc 03). Defaults to `<cwd>/.akko/agents`.
+   * Loaded once at construction: presets are developer-authored config, not user data.
+   */
+  agentTypesDir?: string;
 }
 
 /**
@@ -83,12 +90,19 @@ export class AkkoSessionRegistry implements SessionRegistry {
   readonly #index: SessionIndex;
   readonly #router = new AkkoModelRouter();
   readonly #subagents: SubagentLimiter;
+  readonly #agentTypes: Map<string, AgentType>;
 
   constructor(deps: AkkoSessionRegistryDeps) {
     this.#deps = deps;
     this.#policy = deps.policy ?? new AllowAllPolicy();
     this.#index = deps.sessionIndex ?? new InMemorySessionIndex();
     this.#subagents = new SubagentLimiter(deps.subagentLimits ?? limitsFromEnv());
+    this.#agentTypes = loadAgentTypes(deps.agentTypesDir ?? join(process.cwd(), ".akko", "agents"));
+  }
+
+  /** Agent-type presets available for `spawnSubagent` (doc 03). */
+  agentTypes(): Map<string, AgentType> {
+    return this.#agentTypes;
   }
 
   /** In-flight subagent count (all parents, or one). Exposed for tests + diagnostics. */
@@ -223,9 +237,16 @@ export class AkkoSessionRegistry implements SessionRegistry {
     const sessionId = newSessionId();
     const sessionManager = await this.#deps.conversationStore.create(sessionId);
 
-    // Inherit the parent's model unless overridden, so delegation doesn't silently
-    // downgrade (or upgrade) the model the user chose.
-    const requested = options.model ?? parent.model;
+    const agentType = options.agentType ? this.#agentTypes.get(options.agentType) : undefined;
+    if (options.agentType && !agentType) {
+      throw new Error(
+        `unknown agent type "${options.agentType}"; available: ${[...this.#agentTypes.keys()].join(", ") || "(none)"}`,
+      );
+    }
+
+    // Precedence: explicit override > the preset's model > the parent's. Inheriting last
+    // means delegation doesn't silently change the model the user chose.
+    const requested = options.model ?? agentType?.model ?? parent.model;
     let initialModel: Model<Api> | undefined;
     if (requested) {
       const resolved = this.#router.resolveModelString(requested, wr.modelRuntime);
@@ -235,11 +256,13 @@ export class AkkoSessionRegistry implements SessionRegistry {
     // `canSpawn: false` withholds the spawn tool from the child. Depth is enforced by
     // absence of the capability rather than by a counter the model could talk its way
     // around (the limiter's depth check is a backstop).
-    const { session } = await this.#buildSession(wr, sessionManager, initialModel, {
-      id: sessionId,
-      ownerId: options.actorId,
-      kind: "subagent",
-    });
+    const { session } = await this.#buildSession(
+      wr,
+      sessionManager,
+      initialModel,
+      { id: sessionId, ownerId: options.actorId, kind: "subagent" },
+      agentType,
+    );
 
     const now = Date.now();
     const ref: SessionRef = {
@@ -249,6 +272,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
       kind: "subagent",
       parentSessionId: options.parentSessionId,
       title: options.title ?? options.agentType ?? "subagent",
+      agentType: options.agentType,
       model: session.model ? modelRef(session.model) : undefined,
       hostNode: (this.#deps.nodeId ?? "local") as SessionRef["hostNode"],
       createdAt: now,
@@ -257,6 +281,32 @@ export class AkkoSessionRegistry implements SessionRegistry {
     this.#index.upsertRef(ref);
     this.#deps.projector?.ensureSession(ref);
     return this.#instantiate(ref, session, 0, wr.modelRuntime);
+  }
+
+  /**
+   * Stop a running subagent (doc 03). Aborts its live turn; the transcript stays durable,
+   * so a stopped child is inspectable rather than erased.
+   *
+   * `parentSessionId` scopes the authority: a session may only stop *its own* children,
+   * which keeps this safe to expose as a command without a second permission model.
+   */
+  async stopSubagent(sessionId: SessionId, parentSessionId?: SessionId): Promise<boolean> {
+    const ref = this.#index.getRef(sessionId);
+    if (!ref || ref.kind !== "subagent") return false;
+    if (parentSessionId && ref.parentSessionId !== parentSessionId) {
+      throw new Error("cannot stop a subagent belonging to another session");
+    }
+    const live = this.#live.get(sessionId);
+    if (!live) return false; // already finished or evicted; nothing to stop
+    await live.applyCommand({
+      id: newCommandId(),
+      sessionId,
+      actorId: ref.ownerId,
+      verb: "abort",
+      args: {},
+      ts: Date.now(),
+    });
+    return true;
   }
 
   async list(workspaceId: WorkspaceId, _principalId: PrincipalId): Promise<SessionRef[]> {
@@ -312,6 +362,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
     sessionManager: Awaited<ReturnType<ConversationStore["create"]>>,
     model: Model<Api> | undefined,
     forSession: { id: SessionId; ownerId: PrincipalId; kind: SessionKind },
+    agentType?: AgentType,
   ) {
     // Conversations may delegate; subagents may not, which is what makes nesting
     // impossible by construction (doc 03). Derived from `kind` rather than passed in, so
@@ -330,6 +381,9 @@ export class AkkoSessionRegistry implements SessionRegistry {
               // per-batch override takes precedence.
               getProvider: (override) =>
                 providerOf(override ?? this.#index.getRef(forSession.id)?.model),
+              agentTypes: () => describeAgentTypes(this.#agentTypes),
+              preparePrompt: (task, agentType) =>
+                applyAgentType(agentType ? this.#agentTypes.get(agentType) : undefined, task),
             }),
           ]
         : undefined;
@@ -342,6 +396,10 @@ export class AkkoSessionRegistry implements SessionRegistry {
       sessionManager,
       model,
       ...(customTools ? { customTools } : {}),
+      // An agent type may restrict the child's tools ("researcher" reads but cannot write)
+      // and pick a cheaper thinking level.
+      ...(agentType?.tools ? { tools: agentType.tools } : {}),
+      ...(agentType?.thinkingLevel ? { thinkingLevel: agentType.thinkingLevel as never } : {}),
     });
   }
 
@@ -362,6 +420,8 @@ export class AkkoSessionRegistry implements SessionRegistry {
       persistedCount,
       entrySinks: projector ? [projector, touchSink] : [touchSink],
       resolveModel: (input) => this.#router.resolveModelString(input, modelRuntime),
+      // Scoped to this session's own children, so the verb needs no extra permission model.
+      stopSubagent: (childId) => this.stopSubagent(childId as SessionId, ref.id),
       onRenamed: (title) => {
         const cur = this.#index.getRef(ref.id);
         if (!cur) return;

@@ -68,6 +68,8 @@ export interface AkkoSessionRuntimeOptions {
   onModelChanged?: (modelRef: string) => void;
   /** Called after a successful rename so the index + read model can be updated. */
   onRenamed?: (title: string) => void;
+  /** Stop one of this session's subagents; resolves false if it isn't running. */
+  stopSubagent?: (sessionId: string) => Promise<boolean>;
 }
 
 export class AkkoSessionRuntime implements SessionRuntime {
@@ -79,6 +81,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
   readonly #resolveModel?: (input: string) => Model<Api> | string;
   readonly #onModelChanged?: (modelRef: string) => void;
   readonly #onRenamed?: (title: string) => void;
+  readonly #stopSubagent?: (sessionId: string) => Promise<boolean>;
   #unsubscribe?: () => void;
   #mailbox!: Mailbox;
 
@@ -97,6 +100,7 @@ export class AkkoSessionRuntime implements SessionRuntime {
     this.#resolveModel = options.resolveModel;
     this.#onModelChanged = options.onModelChanged;
     this.#onRenamed = options.onRenamed;
+    this.#stopSubagent = options.stopSubagent;
     this.#persistedCount = options.persistedCount ?? 0;
     this.#unsubscribe = this.#driver.subscribe((event) => {
       this.#eventBus.publish({ type: "pi", sessionId: this.ref.id, event });
@@ -137,6 +141,8 @@ export class AkkoSessionRuntime implements SessionRuntime {
         return this.#driver.abort();
       case "rename":
         return this.#applyRename((command.args as { title?: string }).title ?? "");
+      case "stopSubagent":
+        return this.#applyStopSubagent((command.args as { sessionId?: string }).sessionId ?? "");
       default:
         throw new Error(`verb not implemented in slice 1: ${command.verb}`);
     }
@@ -179,6 +185,17 @@ export class AkkoSessionRuntime implements SessionRuntime {
     if (title.length > 200) throw new Error("rename: title too long");
     this.#onRenamed?.(title);
     this.#eventBus.publish({ type: "session", sessionId: this.ref.id, patch: { title } });
+  }
+
+  /**
+   * Stop one of this session's subagents (doc 03). Delegated to the registry, which owns
+   * liveness and enforces that a session may only stop its *own* children.
+   */
+  async #applyStopSubagent(sessionId: string): Promise<void> {
+    if (!sessionId) throw new Error("stopSubagent: missing sessionId");
+    if (!this.#stopSubagent) throw new Error("stopSubagent: not supported here");
+    const stopped = await this.#stopSubagent(sessionId);
+    if (!stopped) throw new Error(`stopSubagent: ${sessionId} is not a running subagent of this session`);
   }
 
   /** Serialize captures so overlapping turn/agent_end events cannot double-persist. */

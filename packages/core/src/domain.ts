@@ -86,6 +86,8 @@ export interface SessionRef {
   kind: SessionKind;
   /** Present when `kind === "subagent"`: the session that spawned this one. */
   parentSessionId?: SessionId;
+  /** Present when spawned from an agent-type preset (doc 03) — which one. */
+  agentType?: string;
   /** Human-readable title (mirrors pi's session_info name when set). */
   title?: string;
   /** Resolved model id (`provider/id`) this session uses; set on create / setModel (doc 05). */

@@ -139,6 +139,33 @@ through a `spawn_subagent` pi tool registered on conversations. Decisions worth 
 Subagents are filtered out of the session list (they are sessions, but not conversations).
 Roadmap and remaining work: doc 15, item C6.
 
+**Agent types** are `.md` presets in `.akko/agents/` (override with `agentTypesDir`),
+parsed with pi's own `parseFrontmatter` so they behave like every other `.md` convention
+rather than a private dialect:
+
+```md
+---
+description: Read-only research over the codebase
+model: anthropic/claude-3-5-haiku
+thinkingLevel: low
+tools: [read, grep, find, ls]
+---
+You are a research subagent. Answer only from files you actually read.
+```
+
+Frontmatter configures the child (model, thinking level, **tool allowlist** — a
+"researcher" genuinely cannot write, not merely asked not to); the body is prepended to
+each task as instructions. Model precedence is explicit override > preset > parent's, so
+delegation never silently changes the model the user chose. Available types are advertised
+in the spawn tool's description, so the parent knows what it may ask for, and an unknown
+type fails loudly listing what exists. Presets are developer-authored config, loaded once
+at construction.
+
+**`stopSubagent`** aborts a running child's turn. It is scoped to the caller's *own*
+children, which is what makes it safe to expose as a command verb without a second
+permission model. Stopping is a liveness action: the child's transcript stays durable and
+inspectable (doc 04).
+
 We take the **agent-type `.md` convention** (frontmatter: model, thinkingLevel,
 tools, systemPromptMode, inheritSkills, defaultContext) as inspiration from
 `@tintinweb/pi-subagents` and `pi-subagents`, but implement our own thin

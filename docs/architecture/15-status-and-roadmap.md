@@ -287,8 +287,13 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    `{ type: "progress" }` on the event bus and the projector folds it into the parent's
    activity row ("19 subagents — 7/19 done"); ~~per-provider caps~~ **done** —
    `AKKO_SUBAGENT_MAX_PER_PROVIDER=ollama=2`, applied across all sessions since the
-   constraint is shared hardware. **Remaining:** agent-type `.md` frontmatter
-   (model/tools/systemPromptMode) and `stopSubagent`.
+   constraint is shared hardware; ~~agent-type `.md` presets~~ **done** — `.akko/agents/*.md`
+   parsed with pi's `parseFrontmatter`, configuring model/thinkingLevel/**tool allowlist**
+   plus instructions, advertised in the tool description; ~~`stopSubagent`~~ **done** —
+   scoped to the caller's own children. **Slice 2 complete.** Possible later work:
+   async/fleet spawning (the blocking design was chosen to make this a change of *who
+   delivers the result*, not of the model), and rendering subagents nested under their
+   parent in the UI (the data is already there).
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design

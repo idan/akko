@@ -36,6 +36,13 @@ export interface SpawnSubagentToolDeps {
   parentSessionId: SessionId;
   workspaceId: WorkspaceId;
   actorId: PrincipalId;
+  /** Agent-type presets to advertise, so the model knows what it may ask for. */
+  agentTypes?: () => string;
+  /**
+   * Apply an agent-type preset's instructions to a task. The registry owns the presets,
+   * but the tool owns the prompt, so resolution is injected rather than duplicated.
+   */
+  preparePrompt?: (task: string, agentType?: string) => string;
   /** Where the child's stream is observed — the same bus the projector reads. */
   eventBus: EventBus;
   /** Test seam: run the child and resolve with its final text. */
@@ -65,6 +72,12 @@ const parameters = Type.Object({
       title: Type.Optional(
         Type.String({ description: "Short label for this subagent, shown in the UI." }),
       ),
+      agentType: Type.Optional(
+        Type.String({
+          description:
+            "Optional named preset to run this unit as (see the tool description for what is available).",
+        }),
+      ),
     }),
     {
       description:
@@ -80,6 +93,8 @@ const parameters = Type.Object({
 interface TaskSpec {
   task: string;
   title?: string;
+  /** Named agent-type preset (doc 03) — configures model, tools and instructions. */
+  agentType?: string;
   /** Batch-level model override, copied onto each unit so spawns stay uniform. */
   model?: string;
 }
@@ -204,9 +219,11 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
         prompt: spec.task,
         title: spec.title,
         model: spec.model,
+        agentType: spec.agentType,
       });
       childId = child.ref.id;
-      const output = await run(child, spec.task, signal);
+      const prompt = deps.preparePrompt?.(spec.task, spec.agentType) ?? spec.task;
+      const output = await run(child, prompt, signal);
       return {
         index,
         title: spec.title,
@@ -233,6 +250,7 @@ export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
     name: "spawn_subagent",
     label: "Spawn subagents",
     description:
+      (deps.agentTypes?.() ? `Available agent types: ${deps.agentTypes()}. ` : "") +
       "Delegate independent units of work to subagents, each with its own fresh context window, and wait for their answers. " +
       "Pass one entry per unit (e.g. one file each) in `tasks` — they run in parallel, so a list of twenty is one call, not twenty. " +
       "Best for work that would otherwise flood this conversation with detail you don't need verbatim: summarizing or auditing many " +
