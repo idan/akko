@@ -21,6 +21,12 @@ because everything is already a Jazz table (see the plan below). Or pick from
 still a stub) is the biggest capability gain, then the **task classifier** for
 `ModelRouter`, then `SkillsService`.
 
+**Note:** the read model is disposable and the dev sync server is in-memory, so after any
+restart a session has a metadata row but **no messages** until something asks for them.
+Opening a session POSTs `/api/sessions/:id/projection`, which backfills its history from
+canonical SQLite without rehydrating pi. (Before that endpoint existed, an existing
+session rendered empty until you sent it a message.)
+
 **Note:** Jazz is no longer optional. There is no `VITE_JAZZ` flag and no non-Jazz dev
 mode — `bun run dev` starts the sync server, gateway and web app together, and the app
 shows a retrying "read model unavailable" screen if the sync server is missing.

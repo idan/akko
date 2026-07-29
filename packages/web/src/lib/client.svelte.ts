@@ -68,6 +68,13 @@ export class AkkoClient {
 
   select(sessionId: string): void {
     this.activeSessionId = sessionId;
+    // Ask the backend to backfill this session into the read model. The projection is
+    // disposable (doc 04) — after a sync-server restart a session has metadata but no
+    // messages — so opening it is what triggers the rebuild from canonical SQLite.
+    void fetch(`/api/sessions/${encodeURIComponent(sessionId)}/projection`, {
+      method: "POST",
+      credentials: "include",
+    }).catch(() => {});
   }
 
   /**

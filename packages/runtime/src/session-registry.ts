@@ -95,6 +95,23 @@ export class AkkoSessionRegistry implements SessionRegistry {
     }
   }
 
+  /**
+   * Ensure a session's read-model projection exists (metadata + history backfill + live
+   * subscription) **without** rehydrating it into a live pi session.
+   *
+   * Backfill needs only canonical entries, so viewing a cold session must not pay for a
+   * `createAgentSession`. Called when a client opens a session: the projection is
+   * disposable (doc 04) and the dev sync server is in-memory, so after any restart the
+   * session list comes back from metadata while the messages do not exist yet. Without
+   * this, a session looks empty until someone sends a command to it.
+   */
+  async ensureProjected(sessionId: SessionId): Promise<boolean> {
+    const ref = this.#index.getRef(sessionId);
+    if (!ref) return false;
+    this.#deps.projector?.ensureSession(ref);
+    return true;
+  }
+
   async get(sessionId: SessionId): Promise<AkkoSessionRuntime> {
     const live = this.#live.get(sessionId);
     if (live) return live;

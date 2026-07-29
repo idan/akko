@@ -20,6 +20,16 @@ function stubFetch(body: unknown, ok = true, status = 200) {
   return fn;
 }
 
+/**
+ * Calls to the command endpoint only. `select()` also POSTs a projection request, so
+ * asserting on call [0] would silently drift onto the wrong request.
+ */
+function commandCalls(fn: ReturnType<typeof stubFetch>) {
+  return (fn.mock.calls as unknown as [string, RequestInit][]).filter(([url]) =>
+    url.endsWith("/commands"),
+  );
+}
+
 describe("AkkoClient", () => {
   test("loadSessions populates the session list", async () => {
     const client = makeClient();
@@ -62,9 +72,9 @@ describe("AkkoClient", () => {
     client.select("s1");
 
     client.sendPrompt("  hello  ");
-    await vi.waitFor(() => expect(fn).toHaveBeenCalled());
+    await vi.waitFor(() => expect(commandCalls(fn)).toHaveLength(1));
 
-    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    const [url, init] = commandCalls(fn)[0]!;
     expect(url).toBe("/api/sessions/s1/commands");
     expect(init.method).toBe("POST");
     expect(init.credentials).toBe("include"); // identity is the cookie, never the body
@@ -80,7 +90,20 @@ describe("AkkoClient", () => {
     client.select("s1");
     client.sendPrompt("   "); // whitespace only
 
-    expect(fn).not.toHaveBeenCalled();
+    expect(commandCalls(fn)).toHaveLength(0);
+  });
+
+  test("select asks the backend to backfill the session into the read model", async () => {
+    const client = makeClient();
+    const fn = stubFetch({ ok: true });
+
+    client.select("s1");
+
+    expect(client.activeSessionId).toBe("s1");
+    await vi.waitFor(() => expect(fn).toHaveBeenCalled());
+    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("/api/sessions/s1/projection");
+    expect(init.method).toBe("POST");
   });
 
   test("a rejected command surfaces its reason rather than looking like success", async () => {
@@ -110,8 +133,8 @@ describe("AkkoClient", () => {
     client.setModel("s1", "anthropic/claude-sonnet-4-5");
 
     expect(client.sessions[0]).toMatchObject({ model: "anthropic/claude-sonnet-4-5" });
-    await vi.waitFor(() => expect(fn).toHaveBeenCalled());
-    const [url, init] = fn.mock.calls[0] as unknown as [string, RequestInit];
+    await vi.waitFor(() => expect(commandCalls(fn)).toHaveLength(1));
+    const [url, init] = commandCalls(fn)[0]!;
     expect(url).toBe("/api/sessions/s1/commands");
     expect(JSON.parse(String(init.body))).toEqual({
       verb: "setModel",

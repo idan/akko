@@ -15,6 +15,7 @@
  * - `GET  /api/sessions?workspaceId=`  lists sessions (must be a member).
  * - `POST /api/sessions/:id/commands`  attributed command -> session mailbox.
  * - `GET  /api/models?workspaceId=`    available models for the picker (must be a member).
+ * - `POST /api/sessions/:id/projection` backfills the read model for a session on open.
  * - `GET  /api/sessions/:id/history`   canonical finalized messages (backfill/debug).
  */
 import type { Server } from "bun";
@@ -49,6 +50,8 @@ export interface GatewaySessions {
   getEntries(sessionId: SessionId): Promise<CommittedEntry[]>;
   /** Available models for a workspace (doc 05). */
   listModels(workspaceId: WorkspaceId): Promise<ModelCatalogEntry[]>;
+  /** Ensure the read-model projection exists for a session, without rehydrating pi. */
+  ensureProjected?(sessionId: SessionId): Promise<boolean>;
 }
 
 /** The auth surface the gateway needs (satisfied by `createAkkoAuth`). */
@@ -84,6 +87,24 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<undefined> 
       // Better Auth owns everything under /api/auth (passkey ceremonies, session, jwks).
       if (url.pathname.startsWith("/api/auth/")) {
         return deps.auth.handler(req);
+      }
+
+      // POST /api/sessions/<id>/projection — make sure the read model has this session's
+      // history before the client renders it. The projection is disposable and rebuilt
+      // from SQLite (doc 04), so a cold session (or any session after a sync-server
+      // restart) has metadata but no messages until something asks for them.
+      const projection = url.pathname.match(/^\/api\/sessions\/([^/]+)\/projection$/);
+      if (projection && req.method === "POST") {
+        const principal = await deps.auth.getPrincipal(req.headers);
+        if (!principal) return json({ error: "unauthenticated" }, 401);
+        const sessionId = projection[1] as SessionId;
+        const ref = await deps.registry.getRef(sessionId);
+        if (!ref) return json({ error: "unknown session" }, 404);
+        if (!deps.memberships.roleFor(ref.workspaceId, principal.principalId)) {
+          return json({ error: "not a member of this workspace" }, 403);
+        }
+        await deps.registry.ensureProjected?.(sessionId);
+        return json({ ok: true });
       }
 
       // POST /api/sessions/<id>/commands — the whole write path (doc 08). Commands are

@@ -19,6 +19,7 @@ import { newPrincipalId, newWorkspaceId } from "../src/ids.ts";
 class SpyProjector implements SessionProjector {
   meta: string[] = [];
   ensured: string[] = [];
+  rebuilt: string[] = [];
   ensureSession(ref: SessionRef): string {
     this.ensured.push(ref.id);
     return ref.id;
@@ -30,7 +31,9 @@ class SpyProjector implements SessionProjector {
     return id;
   }
   async onEntry(): Promise<void> {}
-  async rebuild(): Promise<void> {}
+  async rebuild(id: SessionId): Promise<void> {
+    this.rebuilt.push(id);
+  }
   async drop(): Promise<void> {}
 }
 
@@ -76,6 +79,37 @@ describe("registry read-model projection", () => {
     expect(projector.meta.sort()).toEqual(["ses_old1", "ses_old2"]);
     // Metadata only — no history backfill / live subscription for untouched sessions.
     expect(projector.ensured).toEqual([]);
+  });
+
+  test("opening a cold session projects it — history backfill without rehydrating pi", async () => {
+    // Regression: the read model is disposable, so after a sync-server restart a session
+    // has a metadata row but no messages. Before this, backfill only ran when a session
+    // was instantiated by a *command*, so opening an existing session showed an empty
+    // conversation until you sent a message to it.
+    const index = new InMemorySessionIndex();
+    const sessionId = "ses_cold" as SessionId;
+    index.upsertRef({
+      id: sessionId,
+      workspaceId: newWorkspaceId(),
+      ownerId: newPrincipalId(),
+      kind: "conversation",
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    const projector = new SpyProjector();
+    const registry = new AkkoSessionRegistry({
+      workspaceRuntimeFactory: { create: async () => { throw new Error("must not rehydrate"); } } as never,
+      conversationStore: { load: async () => { throw new Error("must not rehydrate"); } } as never,
+      eventBus: new InMemoryEventBus(),
+      sessionIndex: index,
+      projector,
+    });
+
+    await expect(registry.ensureProjected(sessionId)).resolves.toBe(true);
+
+    expect(projector.ensured).toEqual([sessionId]); // full projection: meta + backfill + subscribe
+    expect(registry.isLive(sessionId)).toBe(false); // and no pi session was created
+    await expect(registry.ensureProjected("ses_missing" as SessionId)).resolves.toBe(false);
   });
 
   test("committing an entry touches updatedAt and re-projects, so the list orders by recency", async () => {

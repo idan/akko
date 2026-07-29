@@ -17,6 +17,7 @@ let idSeq = 0;
 /** A minimal in-memory sessions backend so the gateway can be exercised without pi. */
 class FakeSessions implements GatewaySessions {
   posted: Command[] = [];
+  projected: string[] = [];
   #refs = new Map<string, SessionRef>();
 
   #mailbox(): Mailbox {
@@ -37,6 +38,11 @@ class FakeSessions implements GatewaySessions {
   }
   async getRef(sessionId: SessionId) {
     return this.#refs.get(sessionId);
+  }
+  async ensureProjected(sessionId: SessionId) {
+    if (!this.#refs.has(sessionId)) return false;
+    this.projected.push(sessionId);
+    return true;
   }
   async get(sessionId: SessionId) {
     const ref = this.#refs.get(sessionId);
@@ -85,6 +91,34 @@ describe("gateway HTTP", () => {
   test("unauthenticated request is rejected", async () => {
     const res = await fetch(`${base}/api/sessions?workspaceId=wsp_1`);
     expect(res.status).toBe(401);
+  });
+});
+
+describe("gateway projection endpoint", () => {
+  test("POST /api/sessions/:id/projection backfills the read model for an existing session", async () => {
+    const { ref } = await fetch(`${base}/api/sessions`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-principal": "prn_bob" },
+      body: JSON.stringify({ workspaceId: "wsp_ws" }),
+    }).then((r) => r.json() as Promise<{ ref: SessionRef }>);
+
+    const res = await fetch(`${base}/api/sessions/${ref.id}/projection`, {
+      method: "POST",
+      headers: { "x-test-principal": "prn_bob" },
+    });
+    expect(res.status).toBe(200);
+    expect(registry.projected).toContain(ref.id);
+  });
+
+  test("projection requires auth and a known session", async () => {
+    const anon = await fetch(`${base}/api/sessions/ses_x/projection`, { method: "POST" });
+    expect(anon.status).toBe(401);
+
+    const missing = await fetch(`${base}/api/sessions/ses_missing/projection`, {
+      method: "POST",
+      headers: { "x-test-principal": "prn_bob" },
+    });
+    expect(missing.status).toBe(404);
   });
 });
 
