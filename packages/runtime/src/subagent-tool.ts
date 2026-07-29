@@ -40,6 +40,8 @@ export interface SpawnSubagentToolDeps {
   eventBus: EventBus;
   /** Test seam: run the child and resolve with its final text. */
   runChild?: (child: AkkoSessionRuntime, prompt: string, signal?: AbortSignal) => Promise<string>;
+  /** How long one unit waits for a concurrency slot before giving up. Test seam. */
+  slotWaitMs?: number;
 }
 
 /** Build the tool-result shape pi expects. */
@@ -49,17 +51,44 @@ const textResult = (text: string, details: { sessionId?: string } = {}) => ({
 });
 
 const parameters = Type.Object({
-  task: Type.String({
-    description:
-      "The complete, self-contained task for the subagent. It does not see this conversation, so include every detail it needs.",
-  }),
-  title: Type.Optional(
-    Type.String({ description: "Short label for this subagent, shown in the UI." }),
+  tasks: Type.Array(
+    Type.Object({
+      task: Type.String({
+        description:
+          "One complete, self-contained unit of work. The subagent cannot see this conversation, so include every detail it needs and say exactly what to return.",
+      }),
+      title: Type.Optional(
+        Type.String({ description: "Short label for this subagent, shown in the UI." }),
+      ),
+    }),
+    {
+      description:
+        "One entry per independent unit of work (e.g. one file each). They run in parallel, so prefer many small entries over one large one.",
+      minItems: 1,
+    },
   ),
   model: Type.Optional(
     Type.String({ description: "Optional model override; defaults to this session's model." }),
   ),
 });
+
+interface TaskSpec {
+  task: string;
+  title?: string;
+}
+
+/** One finished unit of work, in the order it was requested. */
+interface TaskOutcome {
+  index: number;
+  title?: string;
+  output: string;
+  failed: boolean;
+  sessionId?: string;
+}
+
+/** How long a single unit waits for a concurrency slot before giving up. */
+const SLOT_WAIT_TIMEOUT_MS = 60_000;
+const SLOT_POLL_MS = 250;
 
 /**
  * Drive a child session to completion and collect its assistant output.
@@ -125,62 +154,125 @@ export function runSubagentToCompletion(
 export function createSpawnSubagentTool(deps: SpawnSubagentToolDeps) {
   const run =
     deps.runChild ?? ((child, prompt, signal) => runSubagentToCompletion(child, deps.eventBus, prompt, signal));
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * Reserve a slot, waiting for one if the caps are currently full.
+   *
+   * Waiting here does not reintroduce the deadlock we rejected earlier: subagents cannot
+   * spawn (depth 1), so every slot holder is doing real work and will finish. The wait is
+   * also bounded, so a saturated system degrades to a per-item error rather than a hang.
+   */
+  async function acquireSlot(signal?: AbortSignal): Promise<{ release?: () => void } | string> {
+    const deadline = Date.now() + (deps.slotWaitMs ?? SLOT_WAIT_TIMEOUT_MS);
+    for (;;) {
+      const admission = deps.limiter.admit(deps.parentSessionId, 1);
+      if (admission.allowed) return admission;
+      if (signal?.aborted) return "aborted before a subagent slot became free";
+      if (Date.now() >= deadline) return admission.reason;
+      await sleep(SLOT_POLL_MS);
+    }
+  }
+
+  /** Run one unit of work end to end. Never throws: a failure is that unit's result. */
+  async function runOne(spec: TaskSpec, index: number, signal?: AbortSignal): Promise<TaskOutcome> {
+    const slot = await acquireSlot(signal);
+    if (typeof slot === "string") {
+      return { index, title: spec.title, output: `not started: ${slot}`, failed: true };
+    }
+    let childId: string | undefined;
+    try {
+      const child = await deps.registry.spawnSubagent({
+        parentSessionId: deps.parentSessionId,
+        workspaceId: deps.workspaceId,
+        actorId: deps.actorId,
+        prompt: spec.task,
+        title: spec.title,
+      });
+      childId = child.ref.id;
+      const output = await run(child, spec.task, signal);
+      return {
+        index,
+        title: spec.title,
+        output: output || "(no output)",
+        failed: false,
+        sessionId: childId,
+      };
+    } catch (error) {
+      // One bad subagent must not discard the other nineteen results.
+      return {
+        index,
+        title: spec.title,
+        output: `failed: ${error instanceof Error ? error.message : String(error)}`,
+        failed: true,
+        sessionId: childId,
+      };
+    } finally {
+      slot.release?.();
+      if (childId) await deps.registry.evict(childId as never).catch(() => {});
+    }
+  }
 
   return {
     name: "spawn_subagent",
-    label: "Spawn subagent",
+    label: "Spawn subagents",
     description:
-      "Delegate a self-contained task to a subagent with its own fresh context window, and wait for its answer. " +
-      "Best for work that would otherwise flood this conversation with detail you don't need to keep verbatim: " +
-      "summarizing or auditing many files, searching a large codebase, or exploring an approach. " +
-      "Call it several times in one message to run subagents in parallel — that is the fastest way to handle " +
-      "a list of independent items, so scope each call to ONE item (one file, one question) rather than giving " +
-      "one subagent the whole list. The subagent cannot see this conversation and cannot delegate further, so " +
-      "the task must be complete and self-contained, and should state exactly what to return.",
+      "Delegate independent units of work to subagents, each with its own fresh context window, and wait for their answers. " +
+      "Pass one entry per unit (e.g. one file each) in `tasks` — they run in parallel, so a list of twenty is one call, not twenty. " +
+      "Best for work that would otherwise flood this conversation with detail you don't need verbatim: summarizing or auditing many " +
+      "files, searching a large codebase, or exploring several approaches. Each subagent cannot see this conversation and cannot " +
+      "delegate further, so every entry must be complete and self-contained and say exactly what to return.",
     // pi prefixes this with the tool name, so don't repeat it here.
-    promptSnippet: "delegate a self-contained task to a subagent with a fresh context window",
+    promptSnippet: "delegate independent units of work to parallel subagents with fresh context windows",
     // Without these the model sees the tool listed but is given no reason to reach for it,
     // and simply does the work inline — which is what happened in practice.
     promptGuidelines: [
-      "When a request breaks into independent units of work (e.g. per-file summaries or audits), delegate them with spawn_subagent rather than doing each one inline — issue several calls in a single message so they run in parallel.",
-      "Enumerate the units yourself first — a quick ls/find/grep is cheap — then spawn one subagent per unit. Do not hand a whole 'find everything and process all of it' task to a single subagent: that runs serially and defeats the point.",
+      "When a request breaks into independent units of work (e.g. per-file summaries or audits), delegate them with spawn_subagent instead of doing each one inline.",
+      "Enumerate the units yourself first — a quick ls/find/grep is cheap — then pass one `tasks` entry per unit in a single spawn_subagent call. They run in parallel; do not collapse the whole job into one entry.",
       "Prefer spawn_subagent whenever completing a task means reading a lot of material you won't need verbatim afterwards; keep this conversation for the synthesis.",
     ],
     parameters,
-    // Parallel so the model can fan out several children in one turn, bounded by the caps.
     executionMode: "parallel" as const,
+    /**
+     * Accept the single-task shape too. Models reach for `{task, title}` from habit, and
+     * a schema rejection would cost a whole retry round-trip to say so.
+     */
+    prepareArguments(args: unknown) {
+      const a = (args ?? {}) as Record<string, unknown>;
+      if (!a.tasks && typeof a.task === "string") {
+        return { tasks: [{ task: a.task, title: a.title }], model: a.model };
+      }
+      return a;
+    },
     async execute(
       _toolCallId: string,
-      params: { task: string; title?: string; model?: string },
+      params: { tasks: TaskSpec[]; model?: string },
       signal?: AbortSignal,
     ) {
-      const task = params.task?.trim();
-      if (!task) throw new Error("spawn_subagent: `task` is required.");
+      const tasks = (params.tasks ?? []).filter((t) => t?.task?.trim());
+      if (tasks.length === 0) throw new Error("spawn_subagent: at least one task is required.");
 
-      // Depth 1: this tool only exists on conversations, so any call is a first-level spawn.
-      const admission = deps.limiter.admit(deps.parentSessionId, 1);
-      if (!admission.allowed) throw new Error(`Cannot spawn a subagent: ${admission.reason}`);
+      // Bounded concurrency is enforced by the limiter via acquireSlot, so simply start
+      // them all: the slots throttle, and results come back in request order.
+      const outcomes = await Promise.all(tasks.map((t, i) => runOne(t, i, signal)));
 
-      let childId: SessionId | undefined;
-      try {
-        const child = await deps.registry.spawnSubagent({
-          parentSessionId: deps.parentSessionId,
-          workspaceId: deps.workspaceId,
-          actorId: deps.actorId,
-          prompt: task,
-          model: params.model,
-          title: params.title,
-        });
-        childId = child.ref.id;
-        const output = await run(child, task, signal);
-        return textResult(output || "(the subagent produced no output)", { sessionId: childId });
-      } finally {
-        // Free the slot before evicting, so a slow dispose can't wedge admission. Runs on
-        // the throw path too — a failed child must not leak its slot.
-        admission.release?.();
-        // Liveness only — the child's transcript stays durable and inspectable (doc 04).
-        if (childId) await deps.registry.evict(childId).catch(() => {});
-      }
+      const body = outcomes
+        .sort((a, b) => a.index - b.index)
+        .map((o) => `## ${o.title ?? `Task ${o.index + 1}`}${o.failed ? " (failed)" : ""}\n${o.output}`)
+        .join("\n\n");
+      const failed = outcomes.filter((o) => o.failed).length;
+      const header =
+        outcomes.length > 1
+          ? `${outcomes.length} subagents finished${failed ? `, ${failed} failed` : ""}.\n\n`
+          : "";
+
+      // Every unit failing is a tool failure; a partial failure is reported in the body.
+      if (failed === outcomes.length) throw new Error(`All ${failed} subagent(s) failed.\n\n${body}`);
+
+      return {
+        content: [{ type: "text" as const, text: header + body }],
+        details: { sessionIds: outcomes.map((o) => o.sessionId).filter(Boolean) },
+      };
     },
   };
 }

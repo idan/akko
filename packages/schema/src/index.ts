@@ -104,6 +104,23 @@ interface ToolCallBlock {
  */
 export function describeToolCall(call: { name: string; arguments?: Record<string, unknown> }): string {
   const args = call.arguments ?? {};
+
+  // Batch tools (spawn_subagent) carry a list; summarise it rather than falling through
+  // to the bare tool name, which tells the reader nothing about what is running.
+  const list = args.tasks;
+  if (Array.isArray(list) && list.length > 0) {
+    const labels = list
+      .map((t) => (t && typeof t === "object" ? (t as { title?: unknown }).title : undefined))
+      .filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+    if (list.length === 1) {
+      return labels[0] ? `${call.name}: ${labels[0]}` : `${call.name}: 1 task`;
+    }
+    const shown = labels.slice(0, 2).join(", ");
+    if (!shown) return `${call.name}: ${list.length} tasks`; // untitled: the count is all we have
+    const rest = list.length - Math.min(labels.length, 2);
+    return `${call.name}: ${list.length} tasks — ${shown}${rest > 0 ? ` +${rest} more` : ""}`;
+  }
+
   // Most informative field first; every built-in tool has one of these.
   const hint =
     (typeof args.title === "string" && args.title) ||

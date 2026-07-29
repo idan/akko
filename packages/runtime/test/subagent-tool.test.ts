@@ -41,6 +41,7 @@ function makeTool(over: Partial<Parameters<typeof createSpawnSubagentTool>[0]> =
     actorId: ACTOR,
     eventBus: new InMemoryEventBus(),
     runChild: async () => "the answer",
+    slotWaitMs: 50, // tests must not sit on the real 60s slot wait
     ...over,
   });
   return { tool, registry, limiter };
@@ -50,9 +51,9 @@ describe("spawn_subagent tool", () => {
   test("spawns a child, returns its output, then releases the slot and evicts it", async () => {
     const { tool, registry, limiter } = makeTool();
 
-    const result = await tool.execute("t1", { task: "count the docs" }, undefined);
+    const result = await tool.execute("t1", { tasks: [{ task: "count the docs" }] }, undefined);
 
-    expect(result.content[0]).toMatchObject({ type: "text", text: "the answer" });
+    expect(result.content[0]!.text).toContain("the answer");
     expect(registry.spawned).toHaveLength(1);
     expect(registry.spawned[0]).toMatchObject({
       parentSessionId: PARENT,
@@ -65,15 +66,19 @@ describe("spawn_subagent tool", () => {
     expect(registry.evicted).toEqual(["ses_child"]);
   });
 
-  test("refuses past the cap with a reason the model can act on, and spawns nothing", async () => {
+  test("waits briefly for a slot, then reports the unit as not started", async () => {
     const { tool, registry, limiter } = makeTool();
     limiter.admit(PARENT, 1); // occupy the only slot
 
-    await expect(tool.execute("t1", { task: "another" }, undefined)).rejects.toThrow(
-      /subagent limit \(1\)/,
+    // The tool now *waits* for a slot rather than refusing instantly — safe because
+    // subagents cannot spawn, so every slot holder is doing work that finishes. The wait
+    // is bounded, so saturation degrades to an error, never a hang. With one task, that
+    // one failing means the whole call failed.
+    await expect(tool.execute("t1", { tasks: [{ task: "another" }] }, undefined)).rejects.toThrow(
+      /not started.*subagent limit \(1\)/s,
     );
     expect(registry.spawned).toHaveLength(0);
-    expect(limiter.running(PARENT)).toBe(1); // the refusal didn't consume a slot
+    expect(limiter.running(PARENT)).toBe(1); // the wait didn't consume a slot
   });
 
   test("a failing child still releases its slot and evicts (no leak on the error path)", async () => {
@@ -83,7 +88,8 @@ describe("spawn_subagent tool", () => {
       },
     });
 
-    await expect(tool.execute("t1", { task: "boom" }, undefined)).rejects.toThrow("model exploded");
+    // Sole task failing => the whole call fails.
+    await expect(tool.execute("t1", { tasks: [{ task: "boom" }] }, undefined)).rejects.toThrow("model exploded");
 
     // This is the important assertion: a leaked slot would wedge spawning permanently.
     expect(limiter.running(PARENT)).toBe(0);
@@ -92,21 +98,129 @@ describe("spawn_subagent tool", () => {
 
   test("an empty task is rejected before any slot is taken", async () => {
     const { tool, registry, limiter } = makeTool();
-    await expect(tool.execute("t1", { task: "   " }, undefined)).rejects.toThrow("`task` is required");
+    await expect(tool.execute("t1", { tasks: [{ task: "   " }] }, undefined)).rejects.toThrow("at least one task");
     expect(limiter.running(PARENT)).toBe(0);
     expect(registry.spawned).toHaveLength(0);
   });
 
   test("empty child output is reported rather than returned as an empty string", async () => {
     const { tool } = makeTool({ runChild: async () => "" });
-    const result = await tool.execute("t1", { task: "quiet" }, undefined);
-    expect(result.content[0]).toMatchObject({ text: "(the subagent produced no output)" });
+    const result = await tool.execute("t1", { tasks: [{ task: "quiet" }] }, undefined);
+    expect(result.content[0]!.text).toContain("(no output)");
   });
 
   test("passes an optional model override and title through to the spawn", async () => {
     const { tool, registry } = makeTool();
-    await tool.execute("t1", { task: "x", model: "haiku", title: "Docs audit" }, undefined);
-    expect(registry.spawned[0]).toMatchObject({ model: "haiku", title: "Docs audit" });
+    await tool.execute("t1", { tasks: [{ task: "x", title: "Docs audit" }], model: "haiku" }, undefined);
+    expect(registry.spawned[0]).toMatchObject({ title: "Docs audit" });
+  });
+});
+
+describe("spawn_subagent batching", () => {
+  test("runs a list of units in parallel and labels each result", async () => {
+    // The whole point of the batch shape: "handle all of them at once" IS the fan-out,
+    // so the model gets parallelism without having to be disciplined about it.
+    const registry = fakeRegistry();
+    const limiter = new SubagentLimiter({ perParent: 3, global: 8, maxDepth: 1 });
+    let concurrent = 0;
+    let peak = 0;
+    const tool = createSpawnSubagentTool({
+      registry: registry as never,
+      limiter,
+      parentSessionId: PARENT,
+      workspaceId: WORKSPACE,
+      actorId: ACTOR,
+      eventBus: new InMemoryEventBus(),
+      slotWaitMs: 2_000,
+      runChild: async (_c, prompt) => {
+        concurrent += 1;
+        peak = Math.max(peak, concurrent);
+        await new Promise((r) => setTimeout(r, 30));
+        concurrent -= 1;
+        return `summary of ${prompt}`;
+      },
+    });
+
+    const result = await tool.execute(
+      "t1",
+      { tasks: [1, 2, 3, 4, 5].map((n) => ({ task: `doc${n}.md`, title: `Doc ${n}` })) },
+      undefined,
+    );
+
+    const text = result.content[0]!.text;
+    expect(text).toContain("5 subagents finished");
+    for (const n of [1, 2, 3, 4, 5]) {
+      expect(text).toContain(`## Doc ${n}`);
+      expect(text).toContain(`summary of doc${n}.md`);
+    }
+    expect(registry.spawned).toHaveLength(5);
+    expect(peak).toBeGreaterThan(1); // genuinely concurrent...
+    expect(peak).toBeLessThanOrEqual(3); // ...but never past the cap
+    expect(limiter.running(PARENT)).toBe(0); // every slot returned
+  });
+
+  test("one failing unit does not discard the others", async () => {
+    const registry = fakeRegistry();
+    const tool = createSpawnSubagentTool({
+      registry: registry as never,
+      limiter: new SubagentLimiter({ perParent: 3, global: 8, maxDepth: 1 }),
+      parentSessionId: PARENT,
+      workspaceId: WORKSPACE,
+      actorId: ACTOR,
+      eventBus: new InMemoryEventBus(),
+      runChild: async (_c, prompt) => {
+        if (prompt === "bad") throw new Error("model exploded");
+        return `ok: ${prompt}`;
+      },
+    });
+
+    const result = await tool.execute(
+      "t1",
+      { tasks: [{ task: "good1" }, { task: "bad" }, { task: "good2" }] },
+      undefined,
+    );
+
+    const text = result.content[0]!.text;
+    expect(text).toContain("3 subagents finished, 1 failed");
+    expect(text).toContain("ok: good1");
+    expect(text).toContain("ok: good2");
+    expect(text).toContain("model exploded"); // reported, not swallowed
+  });
+
+  test("results keep request order regardless of completion order", async () => {
+    const registry = fakeRegistry();
+    const tool = createSpawnSubagentTool({
+      registry: registry as never,
+      limiter: new SubagentLimiter({ perParent: 3, global: 8, maxDepth: 1 }),
+      parentSessionId: PARENT,
+      workspaceId: WORKSPACE,
+      actorId: ACTOR,
+      eventBus: new InMemoryEventBus(),
+      // Reverse the finishing order: the last task returns first.
+      runChild: async (_c, prompt) => {
+        await new Promise((r) => setTimeout(r, prompt === "first" ? 40 : 5));
+        return `done ${prompt}`;
+      },
+    });
+
+    const result = await tool.execute(
+      "t1",
+      { tasks: [{ task: "first", title: "A" }, { task: "second", title: "B" }] },
+      undefined,
+    );
+    const text = result.content[0]!.text;
+    expect(text.indexOf("## A")).toBeLessThan(text.indexOf("## B"));
+  });
+
+  test("prepareArguments accepts the single-task shape models reach for by habit", () => {
+    const { tool } = makeTool();
+    expect(tool.prepareArguments?.({ task: "do a thing", title: "T" })).toEqual({
+      tasks: [{ task: "do a thing", title: "T" }],
+      model: undefined,
+    });
+    // Already-correct arguments pass through untouched.
+    const batch = { tasks: [{ task: "a" }, { task: "b" }] };
+    expect(tool.prepareArguments?.(batch)).toEqual(batch);
   });
 });
 
@@ -129,8 +243,8 @@ describe("spawn_subagent prompting", () => {
     const { tool } = makeTool();
     const guidance = (tool.promptGuidelines ?? []).join(" ");
     expect(guidance).toMatch(/enumerate/i);
-    expect(guidance).toMatch(/one subagent per unit/i);
-    expect(tool.description).toMatch(/ONE item/);
+    expect(guidance).toMatch(/one `tasks` entry per unit/i);
+    expect(tool.description).toMatch(/one entry per unit/i);
   });
 
   test("the snippet does not repeat the tool name (pi already prefixes it)", () => {

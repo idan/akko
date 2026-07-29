@@ -275,6 +275,10 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    depth > 1, and an LLM caller can read a refusal and adapt); nesting prevented by
    **withholding the tool** from children rather than by a counter. Subagents are filtered
    out of the session list (data is all there — doc 15 C8 if we later render them nested).
+   `spawn_subagent` takes a **list** of tasks and runs them in parallel: three rounds of
+   prompt-tuning failed to make a model reliably issue N separate calls (it enumerated
+   correctly, then reasoned itself into one "handle all of them at once" call), so the
+   parallel path is now the *easy* path rather than the disciplined one.
    **Next (slice 2):** agent-type `.md` frontmatter (model/tools/systemPromptMode),
    `stopSubagent`, streaming child progress into the parent's tool call via `onUpdate`,
    and **per-provider concurrency caps** — a locally-served model may only manage 2–3

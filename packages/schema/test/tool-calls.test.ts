@@ -27,6 +27,28 @@ describe("describeToolCall", () => {
   });
 });
 
+describe("describeToolCall for batch tools", () => {
+  const call = (tasks: unknown[]) => describeToolCall({ name: "spawn_subagent", arguments: { tasks } });
+
+  test("summarises a batch by count and the first few titles", () => {
+    // Without this the label falls through to a bare "spawn_subagent", which tells the
+    // reader nothing about what is running — and a batch is now the normal shape.
+    expect(call([1, 2, 3, 4, 5].map((n) => ({ task: "t", title: `Doc ${n}` }))))
+      .toBe("spawn_subagent: 5 tasks — Doc 1, Doc 2 +3 more");
+    expect(call([{ task: "t", title: "A" }, { task: "t", title: "B" }]))
+      .toBe("spawn_subagent: 2 tasks — A, B");
+  });
+
+  test("a single task reads as itself, not as a count", () => {
+    expect(call([{ task: "t", title: "Doc 1" }])).toBe("spawn_subagent: Doc 1");
+    expect(call([{ task: "t" }])).toBe("spawn_subagent: 1 task");
+  });
+
+  test("untitled batches fall back to the count alone", () => {
+    expect(call([{ task: "a" }, { task: "b" }, { task: "c" }])).toBe("spawn_subagent: 3 tasks");
+  });
+});
+
 describe("toolCallsOfContent", () => {
   const toolsOnly = [
     { type: "toolCall", name: "spawn_subagent", arguments: { title: "One" } },
