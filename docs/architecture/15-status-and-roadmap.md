@@ -265,8 +265,21 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    the `setModel` command, re-applied on rehydration, broadcast cross-tab via a `session`
    patch), and a header model picker. **Next (slice 2):** the task classifier
    (`routeTask`, currently throws) — cheap Haiku-class call that picks a model per task.
-6. **Subagents** (doc 03): `spawnSubagent` is a stub; implement as first-class registry
-   sessions (in-process), reuse the agent-`.md` pattern.
+6. **Subagents** (doc 03): ~~`spawnSubagent` is a stub~~ — **slice 1 done.** Real
+   `spawnSubagent()` creating `kind: "subagent"` sessions with a `parentSessionId`, plus a
+   blocking `spawn_subagent` pi tool so the *model* can delegate. Design decisions:
+   **blocking** (one tool call in, one answer out — async/fleet is a later change to who
+   delivers the result, not to the model); attribution to the **initiating human** rather
+   than a service principal, so membership + role checks apply unchanged; caps **refuse
+   rather than queue** (a queue plus blocking spawns is a resource deadlock the moment
+   depth > 1, and an LLM caller can read a refusal and adapt); nesting prevented by
+   **withholding the tool** from children rather than by a counter. Subagents are filtered
+   out of the session list (data is all there — doc 15 C8 if we later render them nested).
+   **Next (slice 2):** agent-type `.md` frontmatter (model/tools/systemPromptMode),
+   `stopSubagent`, streaming child progress into the parent's tool call via `onUpdate`,
+   and **per-provider concurrency caps** — a locally-served model may only manage 2–3
+   concurrent calls where a hosted provider is happy with far more (`SubagentLimiter`
+   already resolves limits through a function to make this a non-breaking change).
 7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design

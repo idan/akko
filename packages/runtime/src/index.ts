@@ -20,3 +20,5 @@ export * from "./session-runtime.ts";
 export * from "./session-projector.ts";
 export * from "./model-router.ts";
 export * from "./session-registry.ts";
+export * from "./subagent-limits.ts";
+export * from "./subagent-tool.ts";

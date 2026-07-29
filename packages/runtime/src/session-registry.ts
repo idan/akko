@@ -35,6 +35,8 @@ import { AkkoSessionRuntime, type SessionDriver } from "./session-runtime.ts";
 import { InMemorySessionIndex, type SessionIndex } from "./session-index.ts";
 import type { MembershipStore } from "./membership-store.ts";
 import type { SessionProjector } from "./session-projector.ts";
+import { limitsFromEnv, SubagentLimiter, type SubagentLimits } from "./subagent-limits.ts";
+import { createSpawnSubagentTool } from "./subagent-tool.ts";
 import { newSessionId } from "./ids.ts";
 
 export interface AkkoSessionRegistryDeps {
@@ -49,6 +51,8 @@ export interface AkkoSessionRegistryDeps {
   projector?: SessionProjector;
   /** This node's id, stamped onto `SessionRef.hostNode`. */
   nodeId?: string;
+  /** Subagent concurrency caps (doc 03). Defaults come from the environment. */
+  subagentLimits?: SubagentLimits;
 }
 
 /**
@@ -77,11 +81,18 @@ export class AkkoSessionRegistry implements SessionRegistry {
   readonly #policy: AuthorizationPolicy;
   readonly #index: SessionIndex;
   readonly #router = new AkkoModelRouter();
+  readonly #subagents: SubagentLimiter;
 
   constructor(deps: AkkoSessionRegistryDeps) {
     this.#deps = deps;
     this.#policy = deps.policy ?? new AllowAllPolicy();
     this.#index = deps.sessionIndex ?? new InMemorySessionIndex();
+    this.#subagents = new SubagentLimiter(deps.subagentLimits ?? limitsFromEnv());
+  }
+
+  /** In-flight subagent count (all parents, or one). Exposed for tests + diagnostics. */
+  runningSubagents(parentSessionId?: SessionId): number {
+    return this.#subagents.running(parentSessionId);
   }
 
   registerWorkspace(workspace: Workspace): void {
@@ -157,7 +168,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
       if (typeof resolved === "string") throw new Error(`model "${input.model}": ${resolved}`);
       initialModel = resolved;
     }
-    const { session } = await this.#buildSession(wr, sessionManager, initialModel);
+    const { session } = await this.#buildSession(wr, sessionManager, initialModel, {
+      canSpawn: true,
+      sessionId,
+      ownerId: input.ownerId,
+    });
 
     const now = Date.now();
     const ref: SessionRef = {
@@ -182,12 +197,68 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return this.#router.catalog(wr.modelRuntime);
   }
 
-  async spawnSubagent(_options: SpawnSubagentOptions): Promise<AkkoSessionRuntime> {
-    throw new Error("spawnSubagent not implemented in slice 1");
+  /**
+   * Spawn a subagent as an ordinary session (doc 03): same registry, same mailbox, same
+   * authorization gate, `kind: "subagent"` plus a `parentSessionId`. Nothing about it is
+   * a special path — which is what makes it persist, project and rehydrate for free.
+   *
+   * Attribution stays with the **initiating human** (`actorId`) rather than a service
+   * principal, so workspace membership and the role policy apply unchanged; provenance
+   * lives in `parentSessionId`.
+   *
+   * Callers are responsible for concurrency admission (see `SubagentLimiter`); this
+   * method creates what it is asked to create.
+   */
+  async spawnSubagent(options: SpawnSubagentOptions): Promise<AkkoSessionRuntime> {
+    const parent = this.#index.getRef(options.parentSessionId);
+    if (!parent) throw new Error(`unknown parent session: ${options.parentSessionId}`);
+    if (parent.workspaceId !== options.workspaceId) {
+      throw new Error("subagent must live in the same workspace as its parent");
+    }
+
+    const wr = await this.#workspaceRuntime(options.workspaceId);
+    const sessionId = newSessionId();
+    const sessionManager = await this.#deps.conversationStore.create(sessionId);
+
+    // Inherit the parent's model unless overridden, so delegation doesn't silently
+    // downgrade (or upgrade) the model the user chose.
+    const requested = options.model ?? parent.model;
+    let initialModel: Model<Api> | undefined;
+    if (requested) {
+      const resolved = this.#router.resolveModelString(requested, wr.modelRuntime);
+      if (typeof resolved !== "string") initialModel = resolved;
+    }
+
+    // `canSpawn: false` withholds the spawn tool from the child. Depth is enforced by
+    // absence of the capability rather than by a counter the model could talk its way
+    // around (the limiter's depth check is a backstop).
+    const { session } = await this.#buildSession(wr, sessionManager, initialModel, {
+      canSpawn: false,
+    });
+
+    const now = Date.now();
+    const ref: SessionRef = {
+      id: sessionId,
+      workspaceId: options.workspaceId,
+      ownerId: options.actorId,
+      kind: "subagent",
+      parentSessionId: options.parentSessionId,
+      title: options.title ?? options.agentType ?? "subagent",
+      model: session.model ? modelRef(session.model) : undefined,
+      hostNode: (this.#deps.nodeId ?? "local") as SessionRef["hostNode"],
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#index.upsertRef(ref);
+    this.#deps.projector?.ensureSession(ref);
+    return this.#instantiate(ref, session, 0, wr.modelRuntime);
   }
 
   async list(workspaceId: WorkspaceId, _principalId: PrincipalId): Promise<SessionRef[]> {
-    return this.#index.listRefs(workspaceId);
+    // Subagents are sessions, but they are not *conversations* — surfacing them would
+    // litter the sidebar with one row per delegated turn. The data is all there if we
+    // later decide to render them nested under their parent (doc 15, C8).
+    return this.#index.listRefs(workspaceId).filter((r) => r.kind === "conversation");
   }
 
   /** Cheap metadata lookup from the durable index (no rehydration). */
@@ -228,7 +299,23 @@ export class AkkoSessionRegistry implements SessionRegistry {
     wr: WorkspaceRuntime,
     sessionManager: Awaited<ReturnType<ConversationStore["create"]>>,
     model?: Model<Api>,
+    opts: { canSpawn?: boolean; sessionId?: SessionId; ownerId?: PrincipalId } = {},
   ) {
+    // Only conversations get the delegation tool; children are spawned with
+    // `canSpawn: false` so nesting is impossible by construction (doc 03).
+    const customTools =
+      opts.canSpawn && opts.sessionId && opts.ownerId
+        ? [
+            createSpawnSubagentTool({
+              registry: this,
+              limiter: this.#subagents,
+              parentSessionId: opts.sessionId,
+              workspaceId: wr.workspace.id,
+              actorId: opts.ownerId,
+              eventBus: this.#deps.eventBus,
+            }),
+          ]
+        : undefined;
     return createAgentSession({
       cwd: wr.execution.cwd,
       agentDir: wr.agentDir,
@@ -237,6 +324,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
       resourceLoader: wr.resourceLoader,
       sessionManager,
       model,
+      ...(customTools ? { customTools } : {}),
     });
   }
 

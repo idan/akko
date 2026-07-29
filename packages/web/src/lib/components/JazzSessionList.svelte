@@ -16,7 +16,9 @@
   // The session list straight off the read model (doc 02/14): live across tabs, devices
   // and workspace members with no socket fan-out. Must live inside the Jazz provider.
   const rows = new QuerySubscription(() =>
-    app.sessions.where({ workspaceId }).orderBy("updatedAt", "desc"),
+    // `kind` filters out subagents: they are real sessions (doc 03) but not
+    // conversations, so they do not belong in the sidebar.
+    app.sessions.where({ workspaceId, kind: "conversation" }).orderBy("updatedAt", "desc"),
   );
 
   const sessions = $derived(

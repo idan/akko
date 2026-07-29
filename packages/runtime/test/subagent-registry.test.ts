@@ -1,0 +1,163 @@
+/**
+ * `spawnSubagent` against a real registry (doc 03): a subagent is an *ordinary session*
+ * — same registry, same index, same durability — distinguished only by `kind` and
+ * `parentSessionId`. This is also the guard on the two properties that keep delegation
+ * safe: children never get the spawn tool, and they never show up in the session list.
+ */
+import { afterAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { PrincipalId, SessionId, Workspace } from "@akko/core";
+import { InMemoryEventBus } from "../src/event-bus.ts";
+import { BunSqliteAdapter } from "../src/sqlite-bun.ts";
+import { SqliteConversationStore } from "../src/sqlite-conversation-store.ts";
+import { SqliteSessionIndex } from "../src/session-index.ts";
+import { HostWorkspaceRuntimeFactory } from "../src/workspace-runtime.ts";
+import { AkkoSessionRegistry } from "../src/session-registry.ts";
+import { runSubagentToCompletion } from "../src/subagent-tool.ts";
+import { newPrincipalId, newWorkspaceId } from "../src/ids.ts";
+
+const storageRoot = mkdtempSync(join(tmpdir(), "akko-sub-"));
+afterAll(() => rmSync(storageRoot, { recursive: true, force: true }));
+
+function makeStack() {
+  const db = new BunSqliteAdapter(join(storageRoot, "akko.db"));
+  const conversationStore = new SqliteConversationStore({ db, cwd: join(storageRoot, "tree") });
+  const sessionIndex = new SqliteSessionIndex(db);
+  const eventBus = new InMemoryEventBus();
+  const registry = new AkkoSessionRegistry({
+    workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
+    conversationStore,
+    sessionIndex,
+    eventBus,
+  });
+  const workspace: Workspace = {
+    id: newWorkspaceId(),
+    name: "sub-ws",
+    storageRoot,
+    isolation: "host",
+  };
+  registry.registerWorkspace(workspace);
+  return { registry, workspace, sessionIndex, db, eventBus, owner: newPrincipalId() };
+}
+
+describe("spawnSubagent", () => {
+  test("creates a child session marked as a subagent and linked to its parent", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "do the thing",
+      title: "Docs audit",
+    });
+
+    expect(child.ref.kind).toBe("subagent");
+    expect(child.ref.parentSessionId).toBe(parent.ref.id);
+    expect(child.ref.workspaceId).toBe(workspace.id);
+    // Attribution stays with the human, so membership + role checks apply unchanged.
+    expect(child.ref.ownerId).toBe(owner);
+    expect(child.ref.title).toBe("Docs audit");
+    expect(registry.isLive(child.ref.id)).toBe(true);
+    db.close();
+  });
+
+  test("subagents are excluded from the session list but remain in the index", async () => {
+    const { registry, workspace, owner, sessionIndex, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "hidden work",
+    });
+
+    const listed = await registry.list(workspace.id, owner);
+    expect(listed.map((r) => r.id)).toContain(parent.ref.id);
+    expect(listed.map((r) => r.id)).not.toContain(child.ref.id);
+
+    // Still durable and addressable — hiding is a rendering decision, not deletion.
+    expect(sessionIndex.getRef(child.ref.id)?.kind).toBe("subagent");
+    db.close();
+  });
+
+  test("a subagent has no spawn_subagent tool, so delegation cannot nest", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "no nesting",
+    });
+
+    // Depth is enforced by *absence of the capability*, not a counter the model could
+    // argue with — so assert on the child's actual tool registry.
+    expect(parent.session.getActiveToolNames()).toContain("spawn_subagent");
+    expect(child.session.getActiveToolNames()).not.toContain("spawn_subagent");
+    db.close();
+  });
+
+  test("rejects a parent that doesn't exist or lives in another workspace", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+
+    await expect(
+      registry.spawnSubagent({
+        parentSessionId: "ses_nope" as SessionId,
+        workspaceId: workspace.id,
+        actorId: owner,
+        prompt: "x",
+      }),
+    ).rejects.toThrow("unknown parent session");
+
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    await expect(
+      registry.spawnSubagent({
+        parentSessionId: parent.ref.id,
+        workspaceId: newWorkspaceId(),
+        actorId: owner,
+        prompt: "x",
+      }),
+    ).rejects.toThrow("same workspace");
+    db.close();
+  });
+
+  test("the child inherits the parent's model unless overridden", async () => {
+    const { registry, workspace, owner, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner as PrincipalId,
+      prompt: "inherit",
+    });
+    // Delegation shouldn't silently change which model the user is paying for.
+    expect(child.ref.model).toBe(parent.ref.model);
+    db.close();
+  });
+});
+
+describe("subagent live delegation (gated on AKKO_LIVE=1)", () => {
+  test("a real child session answers a delegated task", async () => {
+    if (process.env.AKKO_LIVE !== "1") {
+      console.warn("skipping live subagent test (set AKKO_LIVE=1)");
+      return;
+    }
+    const { registry, workspace, owner, eventBus, db } = makeStack();
+    const parent = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+    const child = await registry.spawnSubagent({
+      parentSessionId: parent.ref.id,
+      workspaceId: workspace.id,
+      actorId: owner,
+      prompt: "Reply with exactly: pong",
+    });
+
+    // Driven through the same helper the tool uses, on the same bus the registry publishes to.
+    const text = await runSubagentToCompletion(child, eventBus, "Reply with exactly: pong");
+    expect(text.toLowerCase()).toContain("pong");
+    db.close();
+  }, 90_000);
+});
