@@ -49,6 +49,30 @@ describe("JazzMessageList", () => {
     expect(container.querySelector('[data-role="assistant"]')).not.toBeNull();
   });
 
+  test("renders a tool row as a compact record rather than an empty bubble", () => {
+    // The subagent regression: tools-only assistant messages have no text, so they used
+    // to render as empty chat bubbles.
+    messageRows.current = [
+      { id: "r1", role: "tool", text: "spawn_subagent: Doc 01" },
+    ];
+    activityRows.current = [];
+    const { container } = render(JazzMessageList, { sessionId: "s1" });
+
+    expect(screen.getByText("spawn_subagent: Doc 01")).toBeInTheDocument();
+    expect(container.querySelector("[data-tool]")).not.toBeNull();
+  });
+
+  test("shows a live indicator while a tool is running", () => {
+    // A blocking spawn_subagent can take minutes with no tokens; without this the UI
+    // looks hung.
+    messageRows.current = [];
+    activityRows.current = [{ id: "a1", kind: "tool", text: "spawn_subagent: Docs audit" }];
+    const { container } = render(JazzMessageList, { sessionId: "s1" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("spawn_subagent: Docs audit");
+    expect(container.querySelector("[data-tool]")).not.toBeNull();
+  });
+
   test("shows the empty state when there are no rows", () => {
     messageRows.current = [];
     activityRows.current = [];

@@ -88,6 +88,44 @@ export const permissions = s.definePermissions(app, (ctx: any) => {
 });
 
 /** Extract renderable text from a pi message's `content` (string or content blocks). */
+/** A tool call as it appears in an assistant message's content blocks. */
+interface ToolCallBlock {
+  type: "toolCall";
+  name: string;
+  arguments?: Record<string, unknown>;
+}
+
+/**
+ * One-line description of a tool call, e.g. `spawn_subagent: Docs audit`.
+ *
+ * Assistant messages that *only* call tools carry no text, so without this they project
+ * as empty rows and render as empty chat bubbles — which is exactly what a run of
+ * subagents looked like before.
+ */
+export function describeToolCall(call: { name: string; arguments?: Record<string, unknown> }): string {
+  const args = call.arguments ?? {};
+  // Most informative field first; every built-in tool has one of these.
+  const hint =
+    (typeof args.title === "string" && args.title) ||
+    (typeof args.path === "string" && args.path) ||
+    (typeof args.command === "string" && args.command) ||
+    (typeof args.pattern === "string" && args.pattern) ||
+    (typeof args.task === "string" && args.task) ||
+    "";
+  const trimmed = hint.replace(/\s+/g, " ").trim();
+  const short = trimmed.length > 80 ? `${trimmed.slice(0, 79)}…` : trimmed;
+  return short ? `${call.name}: ${short}` : call.name;
+}
+
+/** Describe every tool call in a message's content, one per line. "" when there are none. */
+export function toolCallsOfContent(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((c): c is ToolCallBlock => !!c && (c as { type?: string }).type === "toolCall")
+    .map((c) => describeToolCall(c))
+    .join("\n");
+}
+
 export function textOfContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) {

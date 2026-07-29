@@ -22,7 +22,7 @@
  */
 import type { Db } from "jazz-tools/backend";
 import { createHash } from "node:crypto";
-import { app, textOfContent } from "@akko/schema";
+import { app, describeToolCall, textOfContent, toolCallsOfContent } from "@akko/schema";
 import type { CommittedEntry, DomainEvent, EventBus, SessionId, SessionRef } from "@akko/core";
 import type { SessionProjector } from "@akko/runtime";
 
@@ -37,12 +37,18 @@ const debug = (...args: unknown[]): void => {
 interface PiEvent {
   type: string;
   message?: { role?: string; content?: unknown };
-  assistantMessageEvent?: { type: string; delta?: string };
+  assistantMessageEvent?: {
+    type: string;
+    delta?: string;
+    toolCall?: { name: string; arguments?: Record<string, unknown> };
+  };
 }
 
 interface TurnState {
   userText: string;
   text: string;
+  /** Description of the tool currently running, shown while `kind: "tool"`. */
+  toolLabel?: string;
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -153,6 +159,15 @@ export class JazzProjector implements SessionProjector {
   #projectEntry(sessionId: SessionId, entry: CommittedEntry): "user" | "assistant" | undefined {
     const message = entry.entry as { role?: string; content?: unknown };
     if (message.role !== "user" && message.role !== "assistant") return undefined;
+
+    const text = textOfContent(message.content);
+    // An assistant message that only calls tools has no text. Projecting it verbatim
+    // produced empty chat bubbles (one per tool call — very visible with subagents), so
+    // render it as what it is: a record of tool use. `role` is a free-form string column,
+    // so "tool" needs no schema change.
+    const tools = text ? "" : toolCallsOfContent(message.content);
+    if (!text && !tools) return message.role; // nothing to show; don't create an empty row
+
     try {
       // Deterministic id keyed on the canonical entry => idempotent, so re-projecting
       // (backfill after a projection loss) can never duplicate rows.
@@ -161,8 +176,8 @@ export class JazzProjector implements SessionProjector {
         {
           sessionId,
           workspaceId: this.#workspaceOf.get(sessionId) ?? "",
-          role: message.role,
-          text: textOfContent(message.content),
+          role: tools ? "tool" : message.role,
+          text: text || tools,
           createdAt: new Date(entry.ts),
           authorId: entry.actorId ?? "",
         },
@@ -196,11 +211,22 @@ export class JazzProjector implements SessionProjector {
             this.#writeActivity(sessionId, "streaming");
           }
           break;
-        case "message_update":
-          if (pi.assistantMessageEvent?.type === "text_delta" && pi.assistantMessageEvent.delta) {
-            this.#appendStream(sessionId, pi.assistantMessageEvent.delta);
+        case "message_update": {
+          const ev = pi.assistantMessageEvent;
+          if (ev?.type === "text_delta" && ev.delta) {
+            this.#appendStream(sessionId, ev.delta);
+          } else if (ev?.type === "toolcall_end" && ev.toolCall) {
+            // A tool is about to run. Blocking tools (notably spawn_subagent) can take
+            // minutes, during which the turn produces no tokens — without this the UI
+            // shows a stale streaming bubble and looks hung.
+            const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+            t.toolLabel = describeToolCall(ev.toolCall);
+            this.#turn.set(sessionId, t);
+            debug("tool start", sessionId, t.toolLabel);
+            this.#writeActivity(sessionId, "tool");
           }
           break;
+        }
         case "turn_end":
         case "agent_end":
           debug("turn end", sessionId);
@@ -214,6 +240,7 @@ export class JazzProjector implements SessionProjector {
 
   #appendStream(sessionId: SessionId, delta: string): void {
     const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+    t.toolLabel = undefined; // tokens are flowing again — the tool phase is over
     t.text += delta;
     if (!t.timer) {
       t.timer = setTimeout(() => {
@@ -224,7 +251,7 @@ export class JazzProjector implements SessionProjector {
     this.#turn.set(sessionId, t);
   }
 
-  #writeActivity(sessionId: SessionId, kind: "thinking" | "streaming" | "idle"): void {
+  #writeActivity(sessionId: SessionId, kind: "thinking" | "streaming" | "tool" | "idle"): void {
     const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
     try {
       this.#db.upsert(
@@ -234,7 +261,8 @@ export class JazzProjector implements SessionProjector {
           workspaceId: this.#workspaceOf.get(sessionId) ?? "",
           kind,
           userText: t.userText,
-          text: t.text,
+          // While a tool runs there is no streaming text; show what it is doing instead.
+          text: kind === "tool" ? (t.toolLabel ?? "") : t.text,
           updatedAt: new Date(),
         },
         { id: activityId(sessionId) },

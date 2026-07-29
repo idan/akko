@@ -46,6 +46,34 @@ const userMsg = (text: string) => ({ role: "user", content: text });
 const assistantMsg = (text: string) => ({ role: "assistant", content: [{ type: "text", text }] });
 
 describe("JazzProjector (Jazz 2.0 relational)", () => {
+  test("a tools-only assistant message becomes a tool row, not an empty bubble", async () => {
+    // The subagent regression: an assistant message whose content is only tool calls has
+    // no text, so it used to project as a row with text "" — one empty chat bubble per
+    // tool call, which is exactly what a run of subagents looked like.
+    const projector = new JazzProjector(db);
+    const r = ref("ses_tools", "Tools");
+    projector.ensureSession(r);
+
+    await projector.onEntry(r.id, entry("t1", {
+      role: "assistant",
+      content: [
+        { type: "toolCall", name: "spawn_subagent", arguments: { title: "Doc 01" } },
+        { type: "toolCall", name: "spawn_subagent", arguments: { title: "Doc 02" } },
+      ],
+    }));
+    // A message with neither text nor tool calls must not create a row at all.
+    await projector.onEntry(r.id, entry("t2", { role: "assistant", content: [] }));
+
+    let rows: Array<{ role?: string; text?: string }> = [];
+    for (let i = 0; i < 25 && rows.length < 1; i++) {
+      rows = await db.all(app.messages.where({ sessionId: "ses_tools" }));
+      if (rows.length < 1) await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows).toHaveLength(1); // the empty one was skipped
+    expect(rows[0]!.role).toBe("tool");
+    expect(rows[0]!.text).toBe("spawn_subagent: Doc 01\nspawn_subagent: Doc 02");
+  });
+
   test("projects finalized messages as queryable rows keyed by sessionId", async () => {
     const projector = new JazzProjector(db);
     const r = ref("ses_p1", "Greeting");

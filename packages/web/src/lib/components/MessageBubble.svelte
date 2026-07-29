@@ -7,16 +7,35 @@
    * Test/query hooks are `data-*` attributes, deliberately *not* the styling classes:
    * utilities are free to change without breaking a test contract.
    */
-  let { role, text = "", streaming = false, thinking = false }: {
-    role: "user" | "assistant" | string;
+  let { role, text = "", streaming = false, thinking = false, working = false }: {
+    role: "user" | "assistant" | "tool" | string;
     text?: string;
     streaming?: boolean;
     thinking?: boolean;
+    /** Live: a tool is running right now (`text` describes it). */
+    working?: boolean;
   } = $props();
 </script>
 
 <div class="flex {role === 'user' ? 'justify-end' : 'justify-start'}" data-role={role}>
-  {#if thinking}
+  {#if role === "tool" || working}
+    <!-- Tool use is not conversation: render it as a compact record, not a chat bubble.
+         Assistant messages that only call tools carry no text, so as bubbles they showed
+         up empty — very visible with a run of subagents. -->
+    <div
+      class="flex items-center gap-2 rounded-lg border border-border bg-panel/60 px-2.5 py-1.5
+             font-mono text-xs text-muted"
+      data-tool
+      role={working ? "status" : undefined}
+    >
+      {#if working}
+        <span class="size-1.5 animate-thinking rounded-full bg-accent" data-dot></span>
+      {:else}
+        <span aria-hidden="true">⚙</span>
+      {/if}
+      <span class="whitespace-pre-wrap break-all">{text}</span>
+    </div>
+  {:else if thinking}
     <div
       class="inline-flex items-center gap-[5px] rounded-[14px] bg-assistant p-3.5"
       data-thinking

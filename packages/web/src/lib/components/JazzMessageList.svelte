@@ -48,6 +48,8 @@
   {/if}
   {#if live?.kind === "streaming"}
     <MessageBubble role="assistant" text={live.text} streaming />
+  {:else if live?.kind === "tool"}
+    <MessageBubble role="tool" text={live.text} working />
   {:else if live?.kind === "thinking"}
     <MessageBubble role="assistant" thinking />
   {/if}
