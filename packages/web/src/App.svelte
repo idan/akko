@@ -135,7 +135,6 @@
         <JazzSessionList
           workspaceId={WORKSPACE}
           activeId={c.activeSessionId}
-          connected={true}
           onselect={selectSession}
           oncreate={() => void c.createSession()}
           onrename={(id, title) => c.rename(id, title)}

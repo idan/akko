@@ -7,10 +7,14 @@
     title?: string;
   }
 
-  let { sessions, activeId = null, connected = false, onselect, oncreate, onrename }: {
+  let { sessions, activeId = null, status = "connecting", onselect, oncreate, onrename }: {
     sessions: SessionListItem[];
     activeId?: string | null;
-    connected?: boolean;
+    /**
+     * Read-model state. Defaults to "connecting", never "live": an unknown state must not
+     * claim the list is authoritative, because an empty list then reads as "no sessions".
+     */
+    status?: "live" | "connecting" | "error";
     onselect: (id: string) => void;
     oncreate: () => void;
     /** Omitted in read-only contexts (e.g. stories); renaming is then unavailable. */
@@ -97,7 +101,9 @@
       <p class="px-3 py-2 text-muted">No sessions yet</p>
     {/each}
   </nav>
-  <footer class="pt-2 text-xs {connected ? 'text-online' : 'text-muted'}">
-    {connected ? "● connected" : "○ offline"}
+  <!-- An empty list means something very different depending on this, so it must not
+       claim "connected" when the read model has not answered. -->
+  <footer class="pt-2 text-xs {status === 'live' ? 'text-online' : status === 'error' ? 'text-danger' : 'text-muted'}">
+    {status === "live" ? "● live" : status === "error" ? "○ read model unavailable" : "○ connecting…"}
   </footer>
 </div>

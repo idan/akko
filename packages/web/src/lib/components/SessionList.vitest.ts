@@ -20,15 +20,21 @@ describe("SessionList", () => {
     expect(active?.textContent?.trim()).toBe("Second");
   });
 
-  test("shows an empty state and offline status by default", () => {
+  test("shows an empty state and a non-live status by default", () => {
     render(SessionList, { sessions: [], onselect: vi.fn(), oncreate: vi.fn() });
     expect(screen.getByText("No sessions yet")).toBeInTheDocument();
-    expect(screen.getByText("○ offline")).toBeInTheDocument();
+    expect(screen.getByText("○ connecting…")).toBeInTheDocument();
   });
 
-  test("reflects a connected status", () => {
-    render(SessionList, { sessions: [], connected: true, onselect: vi.fn(), oncreate: vi.fn() });
-    expect(screen.getByText("● connected")).toBeInTheDocument();
+  test("distinguishes live, connecting and unavailable", () => {
+    // An empty list means something very different in each state, so the indicator must
+    // not claim "live" until a query has actually resolved.
+    const { unmount } = render(SessionList, { sessions: [], status: "live", onselect: vi.fn(), oncreate: vi.fn() });
+    expect(screen.getByText("● live")).toBeInTheDocument();
+    unmount();
+
+    render(SessionList, { sessions: [], status: "error", onselect: vi.fn(), oncreate: vi.fn() });
+    expect(screen.getByText("○ read model unavailable")).toBeInTheDocument();
   });
 
   test("fires oncreate and onselect callbacks", async () => {

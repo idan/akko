@@ -358,6 +358,13 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
   fixes appear not to work: the running gateway kept serving the old code and the only
   clue was the process start time predating the change. Schema changes still need a full
   `bun run dev` restart (the in-memory sync server keeps its catalogue).
+- **The sidebar status reports the read model, not the socket.** It was hardcoded to
+  `connected` after the WebSocket was removed, so it claimed everything was fine while the
+  read model was dead — the worst possible moment, since an empty list then reads as "you
+  have no sessions". jazz-tools exposes no connection observable, so the honest signal is
+  the subscription itself: `live` only once a query has resolved, `error` when it fails,
+  `connecting…` otherwise. Anything that renders emptiness should say which of the two
+  emptinesses it means.
 - **A session's system prompt is a snapshot.** pi assembles the skills block once, when
   the session is built, so changing skills does not reach running sessions and a deleted
   skill can leave one pointing at a path that no longer exists. Live sessions record the

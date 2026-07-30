@@ -6,7 +6,7 @@
   // SessionList is presentational: plain data in, callbacks out (fed by the WS client
   // or the Jazz read model in the app).
   const populated = {
-    connected: true,
+    status: "live" as const,
     activeId: "s2",
     sessions: [
       { id: "s1", title: "Roadmap review" },
