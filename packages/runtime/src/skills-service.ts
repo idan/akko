@@ -22,6 +22,11 @@ import type { SkillImpact, SkillInfo, WorkspaceId } from "@akko/core";
 import type { WorkspaceRuntime } from "@akko/core";
 
 export interface SkillsServiceDeps {
+  /** Workspace-owned skills (doc 04). Absent => the inventory is disk-only and read-only. */
+  config?: {
+    listSkills(workspaceId: WorkspaceId): Array<{ name: string }>;
+    setSkillHidden(workspaceId: WorkspaceId, name: string, hidden: boolean): boolean;
+  };
   /** Resolve a workspace's runtime bundle (resource loader, cwd, model runtime). */
   workspaceRuntime: (workspaceId: WorkspaceId) => Promise<WorkspaceRuntime>;
   /**
@@ -97,6 +102,15 @@ export class AkkoSkillsService {
     if (!this.#deps.buildPreviewSession) return "";
     const session = await this.#deps.buildPreviewSession(wr);
     return session.systemPrompt;
+  }
+
+  /**
+   * Toggle a workspace-owned skill's prompt visibility. Returns false for skills that
+   * came from disk: those are the user's files, and quietly rewriting their frontmatter
+   * to change behaviour would be a surprising thing for a web UI to do.
+   */
+  async setHiddenFromPrompt(workspaceId: WorkspaceId, name: string, hidden: boolean): Promise<boolean> {
+    return this.#deps.config?.setSkillHidden(workspaceId, name, hidden) ?? false;
   }
 
   async #skills(workspaceId: WorkspaceId): Promise<Skill[]> {

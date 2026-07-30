@@ -16,6 +16,7 @@
  * - `POST /api/sessions/:id/commands`  attributed command -> session mailbox.
  * - `GET  /api/models?workspaceId=`    available models for the picker (must be a member).
  * - `GET  /api/skills?workspaceId=`    skill inventory + system-prompt budget (doc 06).
+ * - `POST /api/skills/:name/visibility` hide/show a workspace-owned skill in the prompt.
  * - `POST /api/sessions/:id/projection` backfills the read model for a session on open.
  * - `GET  /api/sessions/:id/history`   canonical finalized messages (backfill/debug).
  */
@@ -74,6 +75,7 @@ export interface GatewayServerDeps {
   skills?: {
     list(workspaceId: WorkspaceId): Promise<unknown[]>;
     impact(workspaceId: WorkspaceId): Promise<unknown>;
+    setHiddenFromPrompt?(workspaceId: WorkspaceId, name: string, hidden: boolean): Promise<boolean>;
   };
   port?: number;
 }
@@ -203,6 +205,26 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<undefined> 
           deps.skills.impact(workspaceId as WorkspaceId),
         ]);
         return json({ skills, impact });
+      }
+
+      // POST /api/skills/<name>/visibility — toggle a workspace-owned skill's prompt cost.
+      // Only affects skills the workspace owns (doc 04); disk skills are the user's files.
+      const visibility = url.pathname.match(/^\/api\/skills\/([^/]+)\/visibility$/);
+      if (visibility && req.method === "POST") {
+        const principal = await deps.auth.getPrincipal(req.headers);
+        if (!principal) return json({ error: "unauthenticated" }, 401);
+        const body = (await req.json().catch(() => ({}))) as { workspaceId?: string; hidden?: boolean };
+        if (!body?.workspaceId) return json({ error: "missing workspaceId" }, 400);
+        if (!deps.memberships.roleFor(body.workspaceId as WorkspaceId, principal.principalId)) {
+          return json({ error: "not a member of this workspace" }, 403);
+        }
+        const ok = await deps.skills?.setHiddenFromPrompt?.(
+          body.workspaceId as WorkspaceId,
+          decodeURIComponent(visibility[1]!),
+          body.hidden === true,
+        );
+        if (!ok) return json({ error: "not a workspace-owned skill" }, 404);
+        return json({ ok: true });
       }
 
       if (url.pathname === "/api/models" && req.method === "GET") {

@@ -29,6 +29,7 @@ import {
   SqliteMembershipStore,
   SqliteSessionIndex,
   AkkoSkillsService,
+  SqliteWorkspaceConfigStore,
 } from "@akko/runtime";
 import { createGatewayServer } from "./gateway.ts";
 import { createAkkoAuth } from "./auth.ts";
@@ -106,11 +107,14 @@ if (workerConfig) {
   console.log("  jazz:      disabled (set JAZZ_SYNC + JAZZ_APP_ID + JAZZ_BACKEND_SECRET)");
 }
 
+const config = new SqliteWorkspaceConfigStore(db);
+
 const registry = new AkkoSessionRegistry({
   workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
   conversationStore,
   sessionIndex: new SqliteSessionIndex(db),
   memberships,
+  config,
   policy: new RoleBasedPolicy(),
   eventBus,
   projector,
@@ -127,6 +131,7 @@ registry.registerWorkspace(workspace);
 const skills = new AkkoSkillsService({
   workspaceRuntime: (id) => registry.workspaceRuntimeFor(id),
   buildPreviewSession: () => registry.previewSession(workspaceId as WorkspaceId),
+  config,
 });
 
 const server = createGatewayServer({

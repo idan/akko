@@ -73,15 +73,33 @@ enabled skill sets and budgets.
 
 Measured on a workspace with a single small skill: **163 tokens on every turn**.
 
-**No `setEnabled` yet, deliberately.** pi discovers skills from directories and exposes no
-per-session override, so the only documented toggle is writing `disable-model-invocation`
-into the skill's own frontmatter — i.e. mutating the user's files. That is a design
-decision to make, not a small gap to fill, so the interface stays honest rather than
-advertising a method that throws. Prompt-preview and per-skill budget are the value here
-and neither needs it.
+### Workspace-owned skills live in SQLite
 
-Skills for the dev workspace live under `~/.akko/workspaces/<id>/tree/.pi/skills/`
-(the agent's cwd), or any location pi already discovers.
+Skills (and agent types, doc 03) can be stored as **rows in canonical SQLite** rather than
+files on one machine's disk, so a workspace's whole configuration travels in the database
+file. This matters beyond convenience: a session may be rehydrated on any node (doc 12),
+and config living on a developer's filesystem does not travel with it.
+
+pi still reads skill *bodies* from disk — progressive disclosure advertises a
+`<location>` the model then `read`s, and `/skill:name` does a plain `readFileSync`. So
+workspace skills are **materialized** into `<cwd>/.akko/skills/` before use and merged
+into pi's discovery by wrapping its `ResourceLoader`. SQLite is canonical; those files are
+a disposable projection rebuilt from it, exactly as the Jazz read model is (doc 04).
+Re-materializing clears the directory first, so a deleted row cannot leave a stale skill
+behind.
+
+Disk discovery is untouched, and **on a name collision the file wins**: a project skill
+committed to a repo should stay git-diffable and editable, and should not be silently
+shadowed by a row. The inventory reports `source` (`workspace` vs pi's own), so the origin
+stays legible.
+
+**This is what makes toggling possible.** `setHiddenFromPrompt` flips
+`disable-model-invocation` for workspace-owned skills — a column update, not a rewrite of
+someone's files. Disk skills return `false` rather than being edited behind the user's
+back, which is the honest boundary: we manage what we own.
+
+Skills may also live wherever pi already discovers them, e.g.
+`~/.akko/workspaces/<id>/tree/.pi/skills/`.
 
 ## Interfaces
 

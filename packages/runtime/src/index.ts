@@ -21,6 +21,8 @@ export * from "./session-projector.ts";
 export * from "./model-router.ts";
 export * from "./session-registry.ts";
 export * from "./agent-types.ts";
+export * from "./workspace-config-store.ts";
+export * from "./merged-resource-loader.ts";
 export * from "./skills-service.ts";
 export * from "./subagent-limits.ts";
 export * from "./subagent-tool.ts";

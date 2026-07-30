@@ -40,6 +40,8 @@ import type { SessionProjector } from "./session-projector.ts";
 import { limitsFromEnv, providerOf, SubagentLimiter, type SubagentLimits } from "./subagent-limits.ts";
 import { createSpawnSubagentTool } from "./subagent-tool.ts";
 import { applyAgentType, describeAgentTypes, loadAgentTypes, type AgentType } from "./agent-types.ts";
+import type { SqliteWorkspaceConfigStore } from "./workspace-config-store.ts";
+import { materializeSkills, withWorkspaceSkills, workspaceSkillsDir } from "./merged-resource-loader.ts";
 import { newSessionId, newCommandId } from "./ids.ts";
 
 export interface AkkoSessionRegistryDeps {
@@ -61,6 +63,11 @@ export interface AkkoSessionRegistryDeps {
    * Loaded once at construction: presets are developer-authored config, not user data.
    */
   agentTypesDir?: string;
+  /**
+   * Workspace-owned config in SQLite (doc 04/06): agent types and skills that travel with
+   * the database rather than a machine's disk. Merged with the on-disk sources.
+   */
+  config?: SqliteWorkspaceConfigStore;
 }
 
 /**
@@ -117,9 +124,25 @@ export class AkkoSessionRegistry implements SessionRegistry {
     return { systemPrompt: session.systemPrompt };
   }
 
-  /** Agent-type presets available for `spawnSubagent` (doc 03). */
-  agentTypes(): Map<string, AgentType> {
-    return this.#agentTypes;
+  /**
+   * Agent-type presets available for `spawnSubagent` (doc 03), merging the workspace's
+   * database rows with any on-disk `.md` presets. Database rows win: they are the
+   * portable, UI-managed source, whereas the directory is a developer convenience.
+   */
+  agentTypes(workspaceId?: WorkspaceId): Map<string, AgentType> {
+    if (!workspaceId || !this.#deps.config) return this.#agentTypes;
+    const merged = new Map(this.#agentTypes);
+    for (const row of this.#deps.config.listAgentTypes(workspaceId)) {
+      merged.set(row.name, {
+        name: row.name,
+        description: row.description,
+        model: row.model,
+        thinkingLevel: row.thinkingLevel,
+        tools: row.tools,
+        instructions: row.instructions,
+      });
+    }
+    return merged;
   }
 
   /** In-flight subagent count (all parents, or one). Exposed for tests + diagnostics. */
@@ -254,10 +277,11 @@ export class AkkoSessionRegistry implements SessionRegistry {
     const sessionId = newSessionId();
     const sessionManager = await this.#deps.conversationStore.create(sessionId);
 
-    const agentType = options.agentType ? this.#agentTypes.get(options.agentType) : undefined;
+    const available = this.agentTypes(options.workspaceId);
+    const agentType = options.agentType ? available.get(options.agentType) : undefined;
     if (options.agentType && !agentType) {
       throw new Error(
-        `unknown agent type "${options.agentType}"; available: ${[...this.#agentTypes.keys()].join(", ") || "(none)"}`,
+        `unknown agent type "${options.agentType}"; available: ${[...available.keys()].join(", ") || "(none)"}`,
       );
     }
 
@@ -364,7 +388,21 @@ export class AkkoSessionRegistry implements SessionRegistry {
   async #workspaceRuntime(workspaceId: WorkspaceId): Promise<WorkspaceRuntime> {
     const workspace = this.#workspaces.get(workspaceId);
     if (!workspace) throw new Error(`unknown workspace: ${workspaceId}`);
-    return this.#deps.workspaceRuntimeFactory.get(workspace);
+    const wr = await this.#deps.workspaceRuntimeFactory.get(workspace);
+    const config = this.#deps.config;
+    if (!config) return wr;
+
+    // Workspace skills live in SQLite but pi reads their bodies from disk (progressive
+    // disclosure advertises a path the model then `read`s), so project them out before
+    // handing pi its loader. Re-materialized on every access so the files track the rows.
+    const dir = workspaceSkillsDir(wr.execution.cwd, workspaceId);
+    const loader = (wr as { resourceLoader?: unknown }).resourceLoader;
+    if (!loader) return wr;
+    const materialized = materializeSkills(dir, config.listSkills(workspaceId));
+    return {
+      ...wr,
+      resourceLoader: withWorkspaceSkills(loader as never, () => materialized),
+    } as WorkspaceRuntime;
   }
 
   /**
@@ -398,9 +436,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
               // per-batch override takes precedence.
               getProvider: (override) =>
                 providerOf(override ?? this.#index.getRef(forSession.id)?.model),
-              agentTypes: () => describeAgentTypes(this.#agentTypes),
+              agentTypes: () => describeAgentTypes(this.agentTypes(wr.workspace.id)),
               preparePrompt: (task, agentType) =>
-                applyAgentType(agentType ? this.#agentTypes.get(agentType) : undefined, task),
+                applyAgentType(
+                  agentType ? this.agentTypes(wr.workspace.id).get(agentType) : undefined,
+                  task,
+                ),
             }),
           ]
         : undefined;

@@ -300,7 +300,13 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    per-skill cost measured *by difference* (what removing it would save). Deliberately no
    `setEnabled` — pi offers no per-session override, so the only toggle is mutating the
    user's skill frontmatter, which is a decision to make rather than a gap to fill.
-   **Next:** the Skills UI (inventory + live budget + prompt preview, doc 06).
+   Skills and agent types can now live in **canonical SQLite** (`workspace_skills`,
+   `workspace_agent_types`), so a workspace's whole config travels in the database file —
+   necessary for doc 12, where a session may run on any node. pi still reads skill bodies
+   from disk, so rows are materialized into `<cwd>/.akko/skills/` and merged into pi's
+   `ResourceLoader`; files win on a name collision. That ownership is what unlocked
+   `setHiddenFromPrompt` (`POST /api/skills/:name/visibility`) without rewriting user
+   files. **Next:** the Skills UI (inventory + live budget + prompt preview, doc 06).
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design
    before UI:

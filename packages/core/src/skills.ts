@@ -45,11 +45,15 @@ export interface SkillsService {
    */
   impact(workspaceId: WorkspaceId): Promise<SkillImpact>;
 
-  // NOTE: no `setEnabled` yet, deliberately. pi discovers skills from directories and
-  // exposes no per-session override, so the only documented toggle is writing
-  // `disable-model-invocation` into the skill's own frontmatter — i.e. mutating the
-  // user's files. That is a real design decision, not a small implementation gap, so the
-  // interface stays honest until it is made rather than advertising a method that throws.
+  /**
+   * Set a skill's prompt visibility.
+   *
+   * Only works for **workspace-owned** skills (rows in SQLite, doc 04): those are ours to
+   * change. Skills discovered from disk belong to the user's files, and toggling them
+   * would mean rewriting their frontmatter — so this reports failure for them rather than
+   * silently editing someone's repo.
+   */
+  setHiddenFromPrompt(workspaceId: WorkspaceId, name: string, hidden: boolean): Promise<boolean>;
 
   /**
    * Return the full assembled system prompt for a workspace (or a session), so the UI

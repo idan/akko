@@ -70,6 +70,7 @@ const server = createGatewayServer({
   skills: {
     list: async () => [{ name: "demo", description: "d", source: "project", filePath: "/s", enabled: true, hiddenFromPrompt: false }],
     impact: async () => ({ perSkill: [{ name: "demo", tokens: 12, hiddenFromPrompt: false }], totalTokens: 12, injectedBlock: "<available_skills>" }),
+    setHiddenFromPrompt: async (_w: unknown, name: string) => name === "demo",
   },
   port: 0,
 });
@@ -116,6 +117,30 @@ describe("gateway skills endpoint", () => {
     expect(
       (await fetch(`${base}/api/skills`, { headers: { "x-test-principal": "prn_bob" } })).status,
     ).toBe(400);
+  });
+});
+
+describe("gateway skill visibility", () => {
+  const post = (name: string, body: unknown) =>
+    fetch(`${base}/api/skills/${name}/visibility`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-test-principal": "prn_bob" },
+      body: JSON.stringify(body),
+    });
+
+  test("toggles a workspace-owned skill", async () => {
+    const res = await post("demo", { workspaceId: "wsp_ws", hidden: true });
+    expect(res.status).toBe(200);
+  });
+
+  test("a disk skill is a 404 — we don't rewrite the user's files", async () => {
+    expect((await post("from-disk", { workspaceId: "wsp_ws", hidden: true })).status).toBe(404);
+  });
+
+  test("requires auth and a workspace", async () => {
+    const anon = await fetch(`${base}/api/skills/demo/visibility`, { method: "POST" });
+    expect(anon.status).toBe(401);
+    expect((await post("demo", {})).status).toBe(400);
   });
 });
 

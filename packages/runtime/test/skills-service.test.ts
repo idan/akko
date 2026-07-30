@@ -101,6 +101,36 @@ describe("impact", () => {
   });
 });
 
+describe("setHiddenFromPrompt", () => {
+  test("toggles a workspace-owned skill", async () => {
+    const calls: Array<[string, string, boolean]> = [];
+    const s = new AkkoSkillsService({
+      workspaceRuntime: async () => ({}) as never,
+      config: {
+        listSkills: () => [{ name: "owned" }],
+        setSkillHidden: (w, n, h) => {
+          calls.push([w, n, h]);
+          return true;
+        },
+      },
+    });
+    expect(await s.setHiddenFromPrompt(WS, "owned", true)).toBe(true);
+    expect(calls).toEqual([[WS, "owned", true]]);
+  });
+
+  test("refuses skills that came from disk rather than rewriting the user's files", async () => {
+    const s = new AkkoSkillsService({
+      workspaceRuntime: async () => ({}) as never,
+      config: { listSkills: () => [], setSkillHidden: () => false },
+    });
+    expect(await s.setHiddenFromPrompt(WS, "fromDisk", true)).toBe(false);
+  });
+
+  test("is a no-op when no workspace store is wired", async () => {
+    expect(await service([]).setHiddenFromPrompt(WS, "x", true)).toBe(false);
+  });
+});
+
 describe("previewSystemPrompt", () => {
   test("returns the assembled prompt from a real session", async () => {
     const s = service([skill("alpha")], "SYSTEM PROMPT HERE");
