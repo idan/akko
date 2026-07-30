@@ -13,7 +13,7 @@
  */
 import type { CommandVerb, MailboxResult, ModelCatalogEntry, SessionRef } from "@akko/core";
 
-export type { CommandVerb, DomainEvent, MailboxResult, ModelCatalogEntry, SessionRef } from "@akko/core";
+export type { CommandVerb, DomainEvent, MailboxResult, ModelCatalogEntry, SessionRef, SkillImpact, SkillInfo } from "@akko/core";
 
 /** HTTP: POST /api/sessions/:id/commands. The actor is derived server-side. */
 export interface CommandRequest {

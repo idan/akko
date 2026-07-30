@@ -306,7 +306,9 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    from disk, so rows are materialized into `<cwd>/.akko/skills/` and merged into pi's
    `ResourceLoader`; files win on a name collision. That ownership is what unlocked
    `setHiddenFromPrompt` (`POST /api/skills/:name/visibility`) without rewriting user
-   files. **Next:** the Skills UI (inventory + live budget + prompt preview, doc 06).
+   files. ~~**Next:** the Skills UI~~ — **done**: `SkillsPanel` (sidebar → Skills) shows inventory
+   with source, per-turn budget, per-skill cost ordered by expense, the visibility toggle,
+   the injected block and the full prompt on demand.
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design
    before UI:

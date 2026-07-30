@@ -54,7 +54,16 @@ resource bundle, doc 02). The prompt-impact view is therefore computed against t
 session's workspace registry/loader, so different workspaces can have different
 enabled skill sets and budgets.
 
-## Status — built (slice 1: visibility)
+## Status — built
+
+The **Skills panel** (`packages/web/src/lib/components/SkillsPanel.svelte`, reachable from
+the sidebar) implements the UI concept above: inventory with source badges, the per-turn
+budget as the headline number, per-skill cost, a visibility toggle, the injected block, and
+the full assembled prompt on demand. Skills are **ordered by cost**, because the budget
+view exists to find what to trim. Building the full prompt spins up a session, so it is
+only fetched when opened — never on render.
+
+## Backend (slice 1: visibility)
 
 `AkkoSkillsService` (`packages/runtime/src/skills-service.ts`) implements `list`,
 `impact` and `previewSystemPrompt`, exposed at **`GET /api/skills?workspaceId=`**.

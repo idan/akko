@@ -7,6 +7,7 @@
   import { startJazzTokenRefresh } from "./lib/jazz-token.ts";
   import JazzSessionList from "./lib/components/JazzSessionList.svelte";
   import JazzChatView from "./lib/components/JazzChatView.svelte";
+  import SkillsPanel from "./lib/components/SkillsPanel.svelte";
   import Auth from "./lib/components/Auth.svelte";
 
   // The workspace is the single dev workspace for now (doc 16); the principal is the
@@ -17,6 +18,8 @@
   let user = $state<AuthedUser | null | undefined>(undefined);
   let client = $state<AkkoClient | null>(null);
   let sidebarOpen = $state(true);
+  /** Which pane the main area shows. Skills is workspace-scoped, not per session. */
+  let view = $state<"chat" | "skills">("chat");
 
   // Jazz 2.0 client (opt-in): connects to the sync server authenticated with the Better
   // Auth JWT, so the read-ACL row policy filters projected messages by workspace (doc 16).
@@ -138,6 +141,13 @@
           onrename={(id, title) => c.rename(id, title)}
         />
       </div>
+      <button
+        class="shrink-0 cursor-pointer border-0 border-t border-border bg-transparent px-3 py-2.5
+               text-left text-[0.85rem] text-muted hover:text-text"
+        onclick={() => { view = view === "skills" ? "chat" : "skills"; sidebarOpen = false; }}
+      >
+        ⚡ Skills
+      </button>
       <div class="flex shrink-0 items-center justify-between gap-2 border-t border-border px-3 py-2.5 text-[0.85rem]">
         <span class="min-w-0 truncate text-muted" title={user?.email}>{user?.name}</span>
         <button
@@ -149,7 +159,11 @@
       </div>
     </aside>
     <main class="min-w-0 pane:flex {sidebarOpen ? 'hidden' : 'flex'}">
-      <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      {#if view === "skills"}
+        <SkillsPanel client={c} onclose={() => (view = "chat")} />
+      {:else}
+        <JazzChatView client={c} onmenu={() => (sidebarOpen = !sidebarOpen)} />
+      {/if}
     </main>
   </div>
 {/snippet}

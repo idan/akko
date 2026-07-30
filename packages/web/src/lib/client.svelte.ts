@@ -10,7 +10,7 @@
  * Identity is the Better Auth session cookie (`credentials: "include"`); the client never
  * asserts a principal.
  */
-import type { CommandVerb, ModelCatalogEntry, SessionSummary } from "@akko/protocol";
+import type { CommandVerb, ModelCatalogEntry, SessionSummary, SkillImpact, SkillInfo } from "@akko/protocol";
 
 export class AkkoClient {
   readonly principalId: string;
@@ -107,6 +107,58 @@ export class AkkoClient {
     void this.command(sessionId, "setModel", { model });
     // Local echo purely so the <select> doesn't snap back before the projection lands.
     this.sessions = this.sessions.map((s) => (s.id === sessionId ? { ...s, model } : s));
+  }
+
+  /** Skills inventory + prompt budget (doc 06). Loaded on demand, not at startup. */
+  skills = $state<SkillInfo[]>([]);
+  skillImpact = $state<SkillImpact | null>(null);
+  /** Live sessions still using an older skill set — their prompt is a snapshot (doc 06). */
+  staleSessions = $state<string[]>([]);
+
+  async loadSkills(): Promise<void> {
+    const res = await fetch(`/api/skills?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
+      credentials: "include",
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      skills: SkillInfo[];
+      impact: SkillImpact | null;
+      staleSessions?: string[];
+    };
+    this.skills = data.skills ?? [];
+    this.skillImpact = data.impact;
+    this.staleSessions = data.staleSessions ?? [];
+  }
+
+  /** The full assembled system prompt — a separate call because it builds a session. */
+  async loadSystemPrompt(): Promise<string> {
+    const res = await fetch(`/api/skills/prompt?workspaceId=${encodeURIComponent(this.workspaceId)}`, {
+      credentials: "include",
+    });
+    if (!res.ok) return "";
+    return ((await res.json()) as { prompt?: string }).prompt ?? "";
+  }
+
+  /**
+   * Toggle a skill's prompt cost. Only workspace-owned skills can change; disk skills
+   * are the user's files, so the server refuses and we surface why.
+   */
+  async setSkillHidden(name: string, hidden: boolean): Promise<void> {
+    const res = await fetch(`/api/skills/${encodeURIComponent(name)}/visibility`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ workspaceId: this.workspaceId, hidden }),
+    });
+    if (!res.ok) {
+      this.error =
+        res.status === 404
+          ? `"${name}" comes from a file on disk, so Akko won't edit it.`
+          : `could not update "${name}"`;
+      return;
+    }
+    this.error = null;
+    await this.loadSkills();
   }
 
   /** Rename a session (doc 03). The new title arrives back via the read model. */

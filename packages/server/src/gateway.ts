@@ -17,6 +17,7 @@
  * - `GET  /api/models?workspaceId=`    available models for the picker (must be a member).
  * - `GET  /api/skills?workspaceId=`    skill inventory + system-prompt budget (doc 06).
  * - `POST /api/skills/:name/visibility` hide/show a workspace-owned skill in the prompt.
+ * - `GET  /api/skills/prompt?workspaceId=` the full assembled system prompt (on demand).
  * - `POST /api/sessions/:id/projection` backfills the read model for a session on open.
  * - `GET  /api/sessions/:id/history`   canonical finalized messages (backfill/debug).
  */
@@ -78,6 +79,7 @@ export interface GatewayServerDeps {
     list(workspaceId: WorkspaceId): Promise<unknown[]>;
     impact(workspaceId: WorkspaceId): Promise<unknown>;
     setHiddenFromPrompt?(workspaceId: WorkspaceId, name: string, hidden: boolean): Promise<boolean>;
+    previewSystemPrompt?(workspaceId: WorkspaceId): Promise<string>;
   };
   port?: number;
 }
@@ -210,6 +212,21 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<undefined> 
         // does not reach running sessions until they go cold (doc 06).
         const staleSessions = deps.registry.staleSkillSessions?.(workspaceId as WorkspaceId) ?? [];
         return json({ skills, impact, staleSessions });
+      }
+
+      // GET /api/skills/prompt — the whole assembled prompt, not just the skills block.
+      // Separate from the inventory because it builds a throwaway session, so it is only
+      // paid for when someone actually opens the preview.
+      if (url.pathname === "/api/skills/prompt" && req.method === "GET") {
+        const principal = await deps.auth.getPrincipal(req.headers);
+        if (!principal) return json({ error: "unauthenticated" }, 401);
+        const workspaceId = url.searchParams.get("workspaceId");
+        if (!workspaceId) return json({ error: "missing workspaceId" }, 400);
+        if (!deps.memberships.roleFor(workspaceId as WorkspaceId, principal.principalId)) {
+          return json({ error: "not a member of this workspace" }, 403);
+        }
+        const prompt = (await deps.skills?.previewSystemPrompt?.(workspaceId as WorkspaceId)) ?? "";
+        return json({ prompt });
       }
 
       // POST /api/skills/<name>/visibility — toggle a workspace-owned skill's prompt cost.
