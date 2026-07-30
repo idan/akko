@@ -67,6 +67,10 @@ const server = createGatewayServer({
   eventBus,
   auth: testAuth(),
   memberships: ownerMemberships,
+  skills: {
+    list: async () => [{ name: "demo", description: "d", source: "project", filePath: "/s", enabled: true, hiddenFromPrompt: false }],
+    impact: async () => ({ perSkill: [{ name: "demo", tokens: 12, hiddenFromPrompt: false }], totalTokens: 12, injectedBlock: "<available_skills>" }),
+  },
   port: 0,
 });
 const base = `http://localhost:${server.port}`;
@@ -91,6 +95,27 @@ describe("gateway HTTP", () => {
   test("unauthenticated request is rejected", async () => {
     const res = await fetch(`${base}/api/sessions?workspaceId=wsp_1`);
     expect(res.status).toBe(401);
+  });
+});
+
+describe("gateway skills endpoint", () => {
+  test("returns the inventory and prompt budget for a member", async () => {
+    const res = await fetch(`${base}/api/skills?workspaceId=wsp_ws`, {
+      headers: { "x-test-principal": "prn_bob" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { skills: unknown[]; impact: unknown };
+    expect(Array.isArray(body.skills)).toBe(true);
+    expect(body).toHaveProperty("impact");
+  });
+
+  test("requires auth and a workspace", async () => {
+    // Membership is checked with the same roleFor() call as /api/models; this harness
+    // grants everyone owner, so the 403 branch is exercised there rather than here.
+    expect((await fetch(`${base}/api/skills?workspaceId=wsp_ws`)).status).toBe(401);
+    expect(
+      (await fetch(`${base}/api/skills`, { headers: { "x-test-principal": "prn_bob" } })).status,
+    ).toBe(400);
   });
 });
 

@@ -54,6 +54,35 @@ resource bundle, doc 02). The prompt-impact view is therefore computed against t
 session's workspace registry/loader, so different workspaces can have different
 enabled skill sets and budgets.
 
+## Status — built (slice 1: visibility)
+
+`AkkoSkillsService` (`packages/runtime/src/skills-service.ts`) implements `list`,
+`impact` and `previewSystemPrompt`, exposed at **`GET /api/skills?workspaceId=`**.
+
+- **Inventory** comes from `resourceLoader.getSkills()`, so it reflects pi's real
+  discovery (global, project, package) rather than our own scan.
+- **The injected block** is produced by pi's own `formatSkillsForPrompt`, so it is
+  byte-identical to what pi sends — not a reconstruction that can drift.
+- **Per-skill cost is measured by difference**: the block with every skill minus the block
+  without this one. That uses pi's formatter rather than a copy of its layout, and it is
+  the number a reader actually wants — *what would I save by removing this?* It also
+  charges the block's fixed preamble to the last remaining skill, which is right: removing
+  it removes the whole section. Hidden (`disable-model-invocation`) skills report 0.
+- **Token counts use pi's `estimateTokens`**, so they agree with the numbers pi reports
+  elsewhere (e.g. compaction) rather than being a second opinion.
+
+Measured on a workspace with a single small skill: **163 tokens on every turn**.
+
+**No `setEnabled` yet, deliberately.** pi discovers skills from directories and exposes no
+per-session override, so the only documented toggle is writing `disable-model-invocation`
+into the skill's own frontmatter — i.e. mutating the user's files. That is a design
+decision to make, not a small gap to fill, so the interface stays honest rather than
+advertising a method that throws. Prompt-preview and per-skill budget are the value here
+and neither needs it.
+
+Skills for the dev workspace live under `~/.akko/workspaces/<id>/tree/.pi/skills/`
+(the agent's cwd), or any location pi already discovers.
+
 ## Interfaces
 
 See `packages/core/src/skills.ts` and doc 10: `SkillInfo`, `SkillImpact`,

@@ -100,6 +100,23 @@ export class AkkoSessionRegistry implements SessionRegistry {
     this.#agentTypes = loadAgentTypes(deps.agentTypesDir ?? join(process.cwd(), ".akko", "agents"));
   }
 
+  /** Workspace runtime bundle — used by services that need the resource loader (doc 06). */
+  async workspaceRuntimeFor(workspaceId: WorkspaceId): Promise<WorkspaceRuntime> {
+    return this.#workspaceRuntime(workspaceId);
+  }
+
+  /** A throwaway session purely for system-prompt preview (doc 06). */
+  async previewSession(workspaceId: WorkspaceId): Promise<{ systemPrompt: string }> {
+    const wr = await this.#workspaceRuntime(workspaceId);
+    const sessionManager = await this.#deps.conversationStore.create(newSessionId());
+    const { session } = await this.#buildSession(wr, sessionManager, undefined, {
+      id: newSessionId(),
+      ownerId: "prn_preview" as PrincipalId,
+      kind: "conversation",
+    });
+    return { systemPrompt: session.systemPrompt };
+  }
+
   /** Agent-type presets available for `spawnSubagent` (doc 03). */
   agentTypes(): Map<string, AgentType> {
     return this.#agentTypes;

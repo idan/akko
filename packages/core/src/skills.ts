@@ -23,7 +23,10 @@ export interface SkillInfo {
 
 /** The prompt-budget view: what enabled skills cost right now (doc 06). */
 export interface SkillImpact {
-  /** Per-skill token cost of the always-in-context description block. */
+  /**
+   * Per-skill token cost, measured as what removing that skill would save. Hidden skills
+   * report 0, since they never reach the prompt.
+   */
   perSkill: Array<{ name: string; tokens: number; hiddenFromPrompt: boolean }>;
   /** Total tokens contributed by all enabled, prompt-visible skills. */
   totalTokens: number;
@@ -42,12 +45,11 @@ export interface SkillsService {
    */
   impact(workspaceId: WorkspaceId): Promise<SkillImpact>;
 
-  /** Enable/disable a skill, or toggle its `disable-model-invocation` flag. */
-  setEnabled(
-    workspaceId: WorkspaceId,
-    name: string,
-    state: { enabled?: boolean; hiddenFromPrompt?: boolean },
-  ): Promise<void>;
+  // NOTE: no `setEnabled` yet, deliberately. pi discovers skills from directories and
+  // exposes no per-session override, so the only documented toggle is writing
+  // `disable-model-invocation` into the skill's own frontmatter — i.e. mutating the
+  // user's files. That is a real design decision, not a small implementation gap, so the
+  // interface stays honest until it is made rather than advertising a method that throws.
 
   /**
    * Return the full assembled system prompt for a workspace (or a session), so the UI

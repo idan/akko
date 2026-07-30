@@ -15,6 +15,7 @@
  * - `GET  /api/sessions?workspaceId=`  lists sessions (must be a member).
  * - `POST /api/sessions/:id/commands`  attributed command -> session mailbox.
  * - `GET  /api/models?workspaceId=`    available models for the picker (must be a member).
+ * - `GET  /api/skills?workspaceId=`    skill inventory + system-prompt budget (doc 06).
  * - `POST /api/sessions/:id/projection` backfills the read model for a session on open.
  * - `GET  /api/sessions/:id/history`   canonical finalized messages (backfill/debug).
  */
@@ -69,6 +70,11 @@ export interface GatewayServerDeps {
   eventBus: EventBus;
   auth: GatewayAuth;
   memberships: MembershipStore;
+  /** Optional skills inventory/budget service (doc 06). Omitted => the endpoint is empty. */
+  skills?: {
+    list(workspaceId: WorkspaceId): Promise<unknown[]>;
+    impact(workspaceId: WorkspaceId): Promise<unknown>;
+  };
   port?: number;
 }
 
@@ -180,6 +186,25 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<undefined> 
       }
 
       // GET /api/models?workspaceId=<id> — available models for the picker (doc 05).
+      // GET /api/skills — inventory plus the standing system-prompt cost (doc 06). Every
+      // enabled skill's description sits in the prompt on every turn; this makes that
+      // visible instead of invisible.
+      if (url.pathname === "/api/skills" && req.method === "GET") {
+        const principal = await deps.auth.getPrincipal(req.headers);
+        if (!principal) return json({ error: "unauthenticated" }, 401);
+        const workspaceId = url.searchParams.get("workspaceId");
+        if (!workspaceId) return json({ error: "missing workspaceId" }, 400);
+        if (!deps.memberships.roleFor(workspaceId as WorkspaceId, principal.principalId)) {
+          return json({ error: "not a member of this workspace" }, 403);
+        }
+        if (!deps.skills) return json({ skills: [], impact: null });
+        const [skills, impact] = await Promise.all([
+          deps.skills.list(workspaceId as WorkspaceId),
+          deps.skills.impact(workspaceId as WorkspaceId),
+        ]);
+        return json({ skills, impact });
+      }
+
       if (url.pathname === "/api/models" && req.method === "GET") {
         const principal = await deps.auth.getPrincipal(req.headers);
         if (!principal) return json({ error: "unauthenticated" }, 401);

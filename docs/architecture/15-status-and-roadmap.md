@@ -294,7 +294,13 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
    async/fleet spawning (the blocking design was chosen to make this a change of *who
    delivers the result*, not of the model), and rendering subagents nested under their
    parent in the UI (the data is already there).
-7. **`SkillsService`** (doc 06): inventory + system-prompt token-impact view.
+7. **`SkillsService`** (doc 06): ~~inventory + system-prompt token-impact view~~ —
+   **backend done.** `AkkoSkillsService` + `GET /api/skills?workspaceId=`: inventory from
+   pi's own discovery, the byte-exact injected block from `formatSkillsForPrompt`, and
+   per-skill cost measured *by difference* (what removing it would save). Deliberately no
+   `setEnabled` — pi offers no per-session override, so the only toggle is mutating the
+   user's skill frontmatter, which is a decision to make rather than a gap to fill.
+   **Next:** the Skills UI (inventory + live budget + prompt preview, doc 06).
 8. **Session lifecycle + touch-friendly list controls.** `rename` is implemented;
    **archive** and **delete** do not exist as verbs at all, and both need domain design
    before UI:

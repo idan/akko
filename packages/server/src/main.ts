@@ -28,6 +28,7 @@ import {
   SqliteConversationStore,
   SqliteMembershipStore,
   SqliteSessionIndex,
+  AkkoSkillsService,
 } from "@akko/runtime";
 import { createGatewayServer } from "./gateway.ts";
 import { createAkkoAuth } from "./auth.ts";
@@ -123,11 +124,17 @@ const workspace: Workspace = {
 };
 registry.registerWorkspace(workspace);
 
+const skills = new AkkoSkillsService({
+  workspaceRuntime: (id) => registry.workspaceRuntimeFor(id),
+  buildPreviewSession: () => registry.previewSession(workspaceId as WorkspaceId),
+});
+
 const server = createGatewayServer({
   registry,
   eventBus,
   auth: { handler, getPrincipal },
   memberships,
+  skills,
   port,
 });
 
