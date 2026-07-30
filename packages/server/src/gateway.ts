@@ -54,6 +54,8 @@ export interface GatewaySessions {
   listModels(workspaceId: WorkspaceId): Promise<ModelCatalogEntry[]>;
   /** Ensure the read-model projection exists for a session, without rehydrating pi. */
   ensureProjected?(sessionId: SessionId): Promise<boolean>;
+  /** Live sessions whose baked-in skills differ from the workspace's current set (doc 06). */
+  staleSkillSessions?(workspaceId: WorkspaceId): SessionId[];
 }
 
 /** The auth surface the gateway needs (satisfied by `createAkkoAuth`). */
@@ -204,7 +206,10 @@ export function createGatewayServer(deps: GatewayServerDeps): Server<undefined> 
           deps.skills.list(workspaceId as WorkspaceId),
           deps.skills.impact(workspaceId as WorkspaceId),
         ]);
-        return json({ skills, impact });
+        // A session's prompt is a snapshot from when it was built, so a skills change
+        // does not reach running sessions until they go cold (doc 06).
+        const staleSessions = deps.registry.staleSkillSessions?.(workspaceId as WorkspaceId) ?? [];
+        return json({ skills, impact, staleSessions });
       }
 
       // POST /api/skills/<name>/visibility — toggle a workspace-owned skill's prompt cost.

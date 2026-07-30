@@ -14,7 +14,8 @@
  * on a name collision the file wins — the thing in front of you in your editor should not
  * be silently overridden by a database row.
  */
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { WorkspaceId } from "@akko/core";
 import type { StoredSkill } from "./workspace-config-store.ts";
@@ -43,17 +44,30 @@ export function toSkillMarkdown(skill: StoredSkill): string {
 }
 
 /**
+ * Content hash of a workspace's skills — the version stamp that says whether what is on
+ * disk (and what a running session baked into its prompt) is current.
+ */
+export function skillsVersion(skills: StoredSkill[]): string {
+  const h = createHash("sha256");
+  for (const s of [...skills].sort((a, b) => a.name.localeCompare(b.name))) {
+    h.update(`${s.name}\u0000${s.description}\u0000${s.hiddenFromPrompt}\u0000${s.content}\u0000`);
+  }
+  return h.digest("hex").slice(0, 16);
+}
+
+/**
  * Write workspace skills into `<dir>/<name>/SKILL.md` and return them in pi's shape.
  *
- * The directory is cleared first so a deleted or renamed skill cannot linger on disk and
- * keep being discovered — the projection must match the canonical rows exactly.
+ * Synced **incrementally**, never by clearing the directory first. A blanket delete makes
+ * every unchanged skill briefly absent, and a session reading one at that moment gets
+ * ENOENT for a file that was never meant to change. So: write what differs, then remove
+ * only directories that no longer correspond to a row.
  */
 export function materializeSkills(dir: string, skills: StoredSkill[]): MaterializedSkill[] {
-  rmSync(dir, { recursive: true, force: true });
-  if (skills.length === 0) return [];
-  mkdirSync(dir, { recursive: true });
-
   const out: MaterializedSkill[] = [];
+  const keep = new Set<string>();
+
+  if (skills.length > 0) mkdirSync(dir, { recursive: true });
   for (const skill of skills) {
     // Names come from the UI/API, so keep them to a safe path segment rather than
     // trusting them into a filesystem write.
@@ -61,8 +75,15 @@ export function materializeSkills(dir: string, skills: StoredSkill[]): Materiali
     if (!safe || safe.startsWith(".")) continue;
     const baseDir = join(dir, safe);
     const filePath = join(baseDir, "SKILL.md");
-    mkdirSync(baseDir, { recursive: true });
-    writeFileSync(filePath, toSkillMarkdown(skill), "utf8");
+    keep.add(safe);
+    const desired = toSkillMarkdown(skill);
+    // Only touch the file when the content actually differs, so mtimes stay meaningful
+    // and readers are never interrupted for a no-op sync.
+    const current = existsSync(filePath) ? readFileSync(filePath, "utf8") : undefined;
+    if (current !== desired) {
+      mkdirSync(baseDir, { recursive: true });
+      writeFileSync(filePath, desired, "utf8");
+    }
     out.push({
       name: skill.name,
       description: skill.description,
@@ -71,6 +92,13 @@ export function materializeSkills(dir: string, skills: StoredSkill[]): Materiali
       sourceInfo: { path: filePath, source: "workspace", scope: "workspace", origin: "db" },
       disableModelInvocation: skill.hiddenFromPrompt,
     });
+  }
+
+  // Remove only what no longer has a row — a stale directory would keep being discovered.
+  if (existsSync(dir)) {
+    for (const entry of readdirSync(dir)) {
+      if (!keep.has(entry)) rmSync(join(dir, entry), { recursive: true, force: true });
+    }
   }
   return out;
 }

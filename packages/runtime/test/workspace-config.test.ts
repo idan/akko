@@ -3,13 +3,13 @@
  * database rather than living on one machine's disk.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, existsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WorkspaceId } from "@akko/core";
 import { BunSqliteAdapter } from "../src/sqlite-bun.ts";
 import { SqliteWorkspaceConfigStore } from "../src/workspace-config-store.ts";
-import { materializeSkills, toSkillMarkdown, withWorkspaceSkills } from "../src/merged-resource-loader.ts";
+import { materializeSkills, skillsVersion, toSkillMarkdown, withWorkspaceSkills } from "../src/merged-resource-loader.ts";
 
 const root = mkdtempSync(join(tmpdir(), "akko-cfg-"));
 afterAll(() => rmSync(root, { recursive: true, force: true }));
@@ -175,5 +175,50 @@ describe("withWorkspaceSkills", () => {
   test("every other loader method delegates untouched", () => {
     const merged = withWorkspaceSkills(base as never, () => []);
     expect((merged as unknown as typeof base).getPrompts()).toEqual({ prompts: ["p"] });
+  });
+});
+
+describe("materialization is incremental", () => {
+  const skill = (name: string, content = "# Body") => ({
+    workspaceId: WS, name, description: "d", content, hiddenFromPrompt: false, updatedAt: 1,
+  });
+
+  test("an unchanged skill's file is left completely alone", () => {
+    // A blanket clear-and-rewrite makes every unchanged file briefly absent; a session
+    // reading one at that moment gets ENOENT for something that never changed.
+    const dir = join(root, "inc1");
+    const [a] = materializeSkills(dir, [skill("alpha"), skill("beta")]);
+    const before = statSync(a!.filePath).mtimeMs;
+
+    materializeSkills(dir, [skill("alpha"), skill("beta", "# Changed")]);
+    expect(statSync(a!.filePath).mtimeMs).toBe(before); // untouched
+  });
+
+  test("changed content is rewritten, and removed rows are deleted", () => {
+    const dir = join(root, "inc2");
+    const out = materializeSkills(dir, [skill("alpha"), skill("beta")]);
+    materializeSkills(dir, [skill("alpha", "# New")]);
+
+    expect(readFileSync(out[0]!.filePath, "utf8")).toContain("# New");
+    expect(existsSync(out[1]!.filePath)).toBe(false); // stale row's file removed
+  });
+});
+
+describe("skillsVersion", () => {
+  const s = (name: string, content: string, hidden = false) => ({
+    workspaceId: WS, name, description: "d", content, hiddenFromPrompt: hidden, updatedAt: 1,
+  });
+
+  test("is stable across ordering but changes with content, name or visibility", () => {
+    const base = [s("a", "one"), s("b", "two")];
+    expect(skillsVersion(base)).toBe(skillsVersion([base[1]!, base[0]!])); // order-independent
+    expect(skillsVersion(base)).not.toBe(skillsVersion([s("a", "one"), s("b", "CHANGED")]));
+    expect(skillsVersion(base)).not.toBe(skillsVersion([s("a", "one"), s("renamed", "two")]));
+    // Visibility matters: it changes what reaches the prompt.
+    expect(skillsVersion(base)).not.toBe(skillsVersion([s("a", "one", true), s("b", "two")]));
+  });
+
+  test("empty is stable", () => {
+    expect(skillsVersion([])).toBe(skillsVersion([]));
   });
 });

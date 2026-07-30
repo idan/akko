@@ -134,6 +134,17 @@ const skills = new AkkoSkillsService({
   config,
 });
 
+/** Warn when running sessions are using a stale skill set (doc 06). */
+setInterval(() => {
+  const stale = registry.staleSkillSessions(workspaceId as WorkspaceId);
+  if (stale.length > 0) {
+    console.warn(
+      `[akko] ${stale.length} live session(s) built before the latest skills change; ` +
+        `they keep the old prompt until they go cold: ${stale.join(", ")}`,
+    );
+  }
+}, 60_000).unref?.();
+
 const server = createGatewayServer({
   registry,
   eventBus,

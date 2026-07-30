@@ -41,7 +41,7 @@ import { limitsFromEnv, providerOf, SubagentLimiter, type SubagentLimits } from 
 import { createSpawnSubagentTool } from "./subagent-tool.ts";
 import { applyAgentType, describeAgentTypes, loadAgentTypes, type AgentType } from "./agent-types.ts";
 import type { SqliteWorkspaceConfigStore } from "./workspace-config-store.ts";
-import { materializeSkills, withWorkspaceSkills, workspaceSkillsDir } from "./merged-resource-loader.ts";
+import { materializeSkills, skillsVersion, withWorkspaceSkills, workspaceSkillsDir } from "./merged-resource-loader.ts";
 import { newSessionId, newCommandId } from "./ids.ts";
 
 export interface AkkoSessionRegistryDeps {
@@ -98,6 +98,10 @@ export class AkkoSessionRegistry implements SessionRegistry {
   readonly #router = new AkkoModelRouter();
   readonly #subagents: SubagentLimiter;
   readonly #agentTypes: Map<string, AgentType>;
+  /** Skills version materialized per workspace — lets us skip no-op syncs. */
+  readonly #materialized = new Map<WorkspaceId, string>();
+  /** Skills version each live session baked into its system prompt. */
+  readonly #sessionSkillsVersion = new Map<SessionId, string>();
 
   constructor(deps: AkkoSessionRegistryDeps) {
     this.#deps = deps;
@@ -105,6 +109,34 @@ export class AkkoSessionRegistry implements SessionRegistry {
     this.#index = deps.sessionIndex ?? new InMemorySessionIndex();
     this.#subagents = new SubagentLimiter(deps.subagentLimits ?? limitsFromEnv());
     this.#agentTypes = loadAgentTypes(deps.agentTypesDir ?? join(process.cwd(), ".akko", "agents"));
+  }
+
+  /**
+   * Current skills version for a workspace (content hash of its rows).
+   *
+   * A session's system prompt is a **snapshot** taken when the session was built: pi
+   * assembles the skills block once. So changing skills does not retroactively update a
+   * running session, and a deleted skill leaves that session advertising a path that no
+   * longer exists. This is what makes that detectable rather than silent.
+   */
+  skillsVersionFor(workspaceId: WorkspaceId): string {
+    const config = this.#deps.config;
+    return config ? skillsVersion(config.listSkills(workspaceId)) : "";
+  }
+
+  /**
+   * Live sessions whose baked-in skills differ from the workspace's current ones.
+   * Evicting one (or letting it go cold) is enough — it rebuilds on next use.
+   */
+  staleSkillSessions(workspaceId: WorkspaceId): SessionId[] {
+    const current = this.skillsVersionFor(workspaceId);
+    const stale: SessionId[] = [];
+    for (const [id, runtime] of this.#live) {
+      if (runtime.ref.workspaceId !== workspaceId) continue;
+      const at = this.#sessionSkillsVersion.get(id);
+      if (at !== undefined && at !== current) stale.push(id);
+    }
+    return stale;
   }
 
   /** Workspace runtime bundle — used by services that need the resource loader (doc 06). */
@@ -378,6 +410,7 @@ export class AkkoSessionRegistry implements SessionRegistry {
     if (!live) return;
     await live.dispose();
     this.#live.delete(sessionId);
+    this.#sessionSkillsVersion.delete(sessionId);
   }
 
   async disposeAll(): Promise<void> {
@@ -398,7 +431,12 @@ export class AkkoSessionRegistry implements SessionRegistry {
     const dir = workspaceSkillsDir(wr.execution.cwd, workspaceId);
     const loader = (wr as { resourceLoader?: unknown }).resourceLoader;
     if (!loader) return wr;
-    const materialized = materializeSkills(dir, config.listSkills(workspaceId));
+    const skills = config.listSkills(workspaceId);
+    const version = skillsVersion(skills);
+    // Sync only when the rows actually changed. Materialization used to run on every
+    // workspace-runtime access, rewriting files nothing had asked to change.
+    const materialized = materializeSkills(dir, skills);
+    this.#materialized.set(workspaceId, version);
     return {
       ...wr,
       resourceLoader: withWorkspaceSkills(loader as never, () => materialized),
@@ -502,6 +540,8 @@ export class AkkoSessionRegistry implements SessionRegistry {
       apply: (command) => runtime.applyCommand(command),
     });
     runtime.attachMailbox(mailbox);
+    // Record the skills the prompt was built from, so staleness is detectable later.
+    this.#sessionSkillsVersion.set(ref.id, this.#materialized.get(ref.workspaceId) ?? "");
     this.#live.set(ref.id, runtime);
     return runtime;
   }

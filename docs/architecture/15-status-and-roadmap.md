@@ -356,6 +356,12 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
   fixes appear not to work: the running gateway kept serving the old code and the only
   clue was the process start time predating the change. Schema changes still need a full
   `bun run dev` restart (the in-memory sync server keeps its catalogue).
+- **A session's system prompt is a snapshot.** pi assembles the skills block once, when
+  the session is built, so changing skills does not reach running sessions and a deleted
+  skill can leave one pointing at a path that no longer exists. Live sessions record the
+  skills hash they were built from; `staleSkillSessions()` surfaces the divergence
+  (`GET /api/skills` → `staleSessions`) and eviction is the remedy. The same "config is
+  read once" caveat will apply to anything else baked into the prompt.
 - **Text and tool calls are independent, not alternatives.** One assistant message can
   both speak and call tools ("I'll locate the docs" + `bash`), so it projects **two** rows
   — the text, then a `role: "tool"` record at `ts + 1ms` so it sorts after. Treating them

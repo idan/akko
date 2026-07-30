@@ -15,6 +15,7 @@ import { SqliteConversationStore } from "../src/sqlite-conversation-store.ts";
 import { SqliteSessionIndex } from "../src/session-index.ts";
 import { HostWorkspaceRuntimeFactory } from "../src/workspace-runtime.ts";
 import { AkkoSessionRegistry } from "../src/session-registry.ts";
+import { SqliteWorkspaceConfigStore } from "../src/workspace-config-store.ts";
 import { runSubagentToCompletion } from "../src/subagent-tool.ts";
 import { newPrincipalId, newWorkspaceId } from "../src/ids.ts";
 
@@ -286,5 +287,58 @@ describe("stopSubagent", () => {
     await registry.evict(child.ref.id);
     expect(await registry.stopSubagent(child.ref.id)).toBe(false); // already finished
     db.close();
+  });
+});
+
+describe("skills staleness", () => {
+  test("a live session's baked-in skills become detectably stale when rows change", async () => {
+    // A session's system prompt is a snapshot: pi assembles the skills block once, at
+    // build time. Changing skills afterwards does not update a running session, and a
+    // deleted skill leaves it advertising a path that no longer exists. That is
+    // unavoidable without rebuilding the session — but it must not be *silent*.
+    const dir = mkdtempSync(join(tmpdir(), "akko-stale-"));
+    const db = new BunSqliteAdapter(join(dir, "a.db"));
+    const config = new SqliteWorkspaceConfigStore(db);
+    const workspace: Workspace = {
+      id: newWorkspaceId(),
+      name: "stale-ws",
+      storageRoot: dir,
+      isolation: "host",
+    };
+    config.upsertSkill({
+      workspaceId: workspace.id,
+      name: "s1",
+      description: "d",
+      content: "# body",
+      hiddenFromPrompt: false,
+    });
+    const registry = new AkkoSessionRegistry({
+      workspaceRuntimeFactory: new HostWorkspaceRuntimeFactory(),
+      conversationStore: new SqliteConversationStore({ db, cwd: join(dir, "tree") }),
+      sessionIndex: new SqliteSessionIndex(db),
+      eventBus: new InMemoryEventBus(),
+      config,
+    });
+    registry.registerWorkspace(workspace);
+    const owner = newPrincipalId();
+    const session = await registry.createConversation({ workspaceId: workspace.id, ownerId: owner });
+
+    expect(registry.staleSkillSessions(workspace.id)).toEqual([]);
+
+    config.upsertSkill({
+      workspaceId: workspace.id,
+      name: "s1",
+      description: "d",
+      content: "# changed",
+      hiddenFromPrompt: false,
+    });
+
+    expect(registry.staleSkillSessions(workspace.id)).toEqual([session.ref.id]);
+
+    // Evicting is the remedy: the session rebuilds from current config on next use.
+    await registry.evict(session.ref.id);
+    expect(registry.staleSkillSessions(workspace.id)).toEqual([]);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

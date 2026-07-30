@@ -88,6 +88,28 @@ a disposable projection rebuilt from it, exactly as the Jazz read model is (doc 
 Re-materializing clears the directory first, so a deleted row cannot leave a stale skill
 behind.
 
+#### When materialization runs, and how staleness is detected
+
+There is no watcher and no explicit trigger: skills are synced whenever a **workspace
+runtime is resolved** — creating a session, rehydrating a cold one, spawning a subagent,
+building a prompt preview, or hitting the skills API. Live sessions short-circuit
+`registry.get()`, so an ordinary command does *not* re-sync.
+
+Two properties make that safe:
+
+- **The sync is incremental.** Files are written only when their content differs, and only
+  directories without a matching row are removed. An earlier version cleared the directory
+  and rewrote everything, which made every *unchanged* skill briefly absent — a session
+  reading one at that moment would get `ENOENT` for a file nothing had asked to change.
+- **Sessions carry a version stamp.** A session's system prompt is a **snapshot**: pi
+  assembles the skills block once, at build time. Changing skills therefore does *not*
+  update a running session, and a deleted skill leaves it advertising a path that no
+  longer exists. That is inherent — but it must not be silent, so each live session
+  records the skills hash it was built from and `registry.staleSkillSessions(workspaceId)`
+  reports the divergence. `GET /api/skills` returns it as `staleSessions`, and the server
+  logs a warning. Evicting a session (or letting it go cold) is the remedy: it rebuilds
+  from current config on next use.
+
 Disk discovery is untouched, and **on a name collision the file wins**: a project skill
 committed to a repo should stay git-diffable and editable, and should not be silently
 shadowed by a row. The inventory reports `source` (`workspace` vs pi's own), so the origin
