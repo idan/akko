@@ -167,6 +167,7 @@ AKKO_LIVE=1 bun test    # + live pi prompt and live WS round-trip
 | Distributed execution (daemons, node↔Hub) — **design only** | 12 |
 | Database: SQLite now; SearchIndex seam for vectors | 13 |
 | Jazz 2.0 (relational) evaluation + integration + standalone server | 14 |
+| AHP evaluation — experimental northbound adapter, not a core/storage pivot | 17 |
 
 ## Next steps (prioritized)
 
@@ -351,6 +352,9 @@ regression takes down the whole UI, so the WS is retired **last** and the `Proje
 **F. Later (design done, not built)**
 12. Memory + `SearchIndex` (doc 07/13); container isolation (doc 09); distributed
     execution — daemon + node↔Hub link + replication (doc 12).
+13. **Experimental AHP compatibility spike** (doc 17): add AHP as a northbound adapter
+    beside Jazz, tested through the official client. Do not replace canonical storage,
+    the first-party HTTP+Jazz path, or the node↔Hub replication protocol.
 
 ## Known gaps & caveats
 
