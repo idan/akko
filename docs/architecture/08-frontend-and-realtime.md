@@ -81,14 +81,22 @@ Partly built, the rest additive (doc 02):
 - **In-flight turn state** — **built**: an ephemeral `activity` row per session carries
   the sender's prompt, a "thinking" indicator and the streaming assistant text, so every
   observer (other tabs, devices, members) sees the same in-flight state with no fan-out.
+- **Concurrency feedback** — **built**: pi's `queue_update` is projected onto the
+  `activity` row and rendered as a "Queued" bubble. A prompt sent mid-turn is accepted and
+  queued by pi as a follow-up; before this it appeared to vanish until the turn finished.
+  Note the queue lives in **pi**, not our mailbox: `applyCommand` resolves at pi's
+  *preflight* rather than at turn end (so the mailbox keeps moving), so our mailbox is
+  almost always empty and is the wrong place to look for queue depth.
+- **Attribution rendering** — deferred, and less cheap than it looks. `authorId` is
+  projected on every message row, but it is a `prn_…`; showing it requires a
+  **principal → display name directory** for the workspace, which does not exist yet.
 - **Presence** — who is in a session right now. Deferred.
-- **Typing indicators / cursors** — ephemeral Jazz state; would be the first sanctioned
-  *client* write (non-authoritative, scoped to the writer's own principal). Deferred.
-- **Attribution rendering** — show which participant sent each message (backed by the
-  per-entry `actorId` side-field, doc 04, already projected as `authorId`); optionally
-  the model is author-aware. Deferred.
-- **Concurrency feedback** — reflect the mailbox/queue state ("Bob is steering…"),
-  driven by pi's `queue_update` events plus our attribution. Deferred.
+- **Typing indicators / cursors** — ephemeral Jazz state, and the **first sanctioned
+  client write**: every table is `allowInsert.never()` today, so this needs a narrow
+  write policy scoped to the writer's own principal (doc 16), not just a new table.
+
+  All three of the above only pay off with a second human in the workspace, so they are
+  worth doing together with the write policy rather than piecemeal.
 
 ## Extension UI over the wire
 

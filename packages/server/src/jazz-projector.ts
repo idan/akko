@@ -36,6 +36,8 @@ const debug = (...args: unknown[]): void => {
 
 interface PiEvent {
   type: string;
+  steering?: readonly string[];
+  followUp?: readonly string[];
   message?: { role?: string; content?: unknown };
   assistantMessageEvent?: {
     type: string;
@@ -49,6 +51,8 @@ interface TurnState {
   text: string;
   /** Description of the tool currently running, shown while `kind: "tool"`. */
   toolLabel?: string;
+  /** Messages queued behind the current turn (pi steering + follow-ups). */
+  queued?: string[];
   timer?: ReturnType<typeof setTimeout>;
 }
 
@@ -260,6 +264,17 @@ export class JazzProjector implements SessionProjector {
           }
           break;
         }
+        case "queue_update": {
+          // Sending a prompt mid-turn is accepted and queued by pi as a follow-up. Without
+          // this the message simply disappears from the UI until the turn ends.
+          const t = this.#turn.get(sessionId) ?? { userText: "", text: "" };
+          t.queued = [...(pi.steering ?? []), ...(pi.followUp ?? [])];
+          this.#turn.set(sessionId, t);
+          debug("queue", sessionId, `${t.queued.length} waiting`);
+          // Preserve whatever the turn is doing; only the queue changed.
+          this.#writeActivity(sessionId, t.toolLabel ? "tool" : t.text ? "streaming" : "thinking");
+          break;
+        }
         case "turn_end":
         case "agent_end":
           debug("turn end", sessionId);
@@ -297,6 +312,10 @@ export class JazzProjector implements SessionProjector {
           // Both live at once: a turn may have streamed text *and* be running a tool.
           text: t.text,
           toolLabel: kind === "tool" ? (t.toolLabel ?? "") : "",
+          // Queue state is independent of what the turn is currently doing, so it rides
+          // along with every activity write rather than being its own `kind`.
+          queuedCount: t.queued?.length ?? 0,
+          queuedText: t.queued?.[0] ?? "",
           updatedAt: new Date(),
         },
         { id: activityId(sessionId) },

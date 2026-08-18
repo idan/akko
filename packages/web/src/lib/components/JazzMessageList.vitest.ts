@@ -6,7 +6,7 @@ import { describe, expect, test, vi } from "vitest";
 // returns the right fixture based on which table the query object tags.
 const { messageRows, activityRows } = vi.hoisted(() => ({
   messageRows: { current: [] as { id: string; role: string; text: string }[] },
-  activityRows: { current: [] as { id: string; kind: string; text: string; toolLabel?: string }[] },
+  activityRows: { current: [] as { id: string; kind: string; text: string; toolLabel?: string; queuedCount?: number; queuedText?: string }[] },
 }));
 
 vi.mock("jazz-tools/svelte", () => ({
@@ -74,6 +74,27 @@ describe("JazzMessageList", () => {
 
     expect(screen.getByText("I'll find the docs.")).toBeInTheDocument();
     expect(screen.getByText("spawn_subagent: 3 tasks")).toBeInTheDocument();
+  });
+
+  test("shows work queued behind the current turn", () => {
+    // Sending mid-turn is accepted and queued, not dropped; the UI has to say so or the
+    // message looks lost until the turn ends.
+    messageRows.current = [];
+    activityRows.current = [
+      { id: "a1", kind: "streaming", text: "working…", queuedCount: 2, queuedText: "do this next" },
+    ];
+    const { container } = render(JazzMessageList, { sessionId: "s1" });
+
+    expect(container.querySelector("[data-queued]")).not.toBeNull();
+    expect(screen.getByText(/do this next/)).toBeInTheDocument();
+    expect(screen.getByText(/\+1 more/)).toBeInTheDocument();
+  });
+
+  test("no queue indicator when nothing is waiting", () => {
+    messageRows.current = [];
+    activityRows.current = [{ id: "a1", kind: "streaming", text: "working…", queuedCount: 0 }];
+    const { container } = render(JazzMessageList, { sessionId: "s1" });
+    expect(container.querySelector("[data-queued]")).toBeNull();
   });
 
   test("shows a live indicator while a tool is running", () => {

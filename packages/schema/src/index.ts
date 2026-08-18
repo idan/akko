@@ -67,6 +67,14 @@ export const appSchema = {
      * visible flicker. Both are live at once, so both need a home.
      */
     toolLabel: s.string(),
+    /**
+     * Work waiting behind the current turn. A prompt sent while the agent is streaming is
+     * accepted and queued by pi as a follow-up, which is otherwise completely invisible —
+     * the message appears to vanish until the turn ends.
+     */
+    queuedCount: s.int(),
+    /** First queued message, so the UI can show *what* is waiting, not just how many. */
+    queuedText: s.string(),
     updatedAt: s.timestamp(),
   }),
 };

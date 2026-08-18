@@ -18,7 +18,14 @@
   // deletes are tombstones), so treat idle as "nothing in flight".
   const current = $derived(
     (activity.current ?? [])[0] as
-      | { kind?: string; userText?: string; text?: string; toolLabel?: string }
+      | {
+          kind?: string;
+          userText?: string;
+          text?: string;
+          toolLabel?: string;
+          queuedCount?: number;
+          queuedText?: string;
+        }
       | undefined,
   );
   const live = $derived(current && current.kind !== "idle" ? current : undefined);
@@ -62,6 +69,24 @@
     {#if live?.kind === "tool"}
       <MessageBubble role="tool" text={live.toolLabel ?? ""} working />
     {/if}
+  {/if}
+
+  <!-- A prompt sent mid-turn is accepted and queued by pi, not dropped. Showing it
+       prevents the message appearing to vanish until the turn finishes. -->
+  {#if live && (live.queuedCount ?? 0) > 0}
+    <div class="flex justify-end" data-queued>
+      <div
+        class="max-w-[min(680px,85%)] rounded-[14px] border border-dashed border-border
+               px-3.5 py-2.5 text-muted"
+        role="status"
+      >
+        <span class="mr-2 text-xs uppercase tracking-wide">Queued</span>
+        {live.queuedText}
+        {#if (live.queuedCount ?? 0) > 1}
+          <span class="text-xs"> +{(live.queuedCount ?? 0) - 1} more</span>
+        {/if}
+      </div>
+    </div>
   {/if}
   {#if (rows.current ?? []).length === 0 && !live}
     <p class="px-3 py-2 text-muted">No messages yet.</p>

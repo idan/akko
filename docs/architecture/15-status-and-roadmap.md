@@ -258,8 +258,30 @@ retiring ~800 lines of read-path machinery (`conversation.ts`, `client.svelte.ts
    mid-turn offline period converges. Throttling via DevTools proved to be a non-test —
    it does not apply to WebSocket traffic or to loopback, so the offline/reconnect test
    is what actually cleared this step.
-4. **Presence/typing + per-message attribution** — cheap once everything is a Jazz table
-   (the history endpoint already returns `authorId`).
+4. **Presence/typing + per-message attribution.** Four separate things, and they are not
+   equally sized or equally valuable:
+   - ~~**Concurrency feedback**~~ — **done.** A prompt sent while the agent is streaming is
+     accepted and queued by pi as a follow-up, which was completely invisible: the message
+     appeared to vanish until the turn ended. pi's `queue_update` is now projected onto the
+     `activity` row (`queuedCount`/`queuedText`) and rendered as a dashed "Queued" bubble.
+     This is the one piece that pays off **solo**, which is why it was taken first.
+   - **Attribution rendering** — *not* as cheap as "the row already has `authorId`"
+     suggests. `authorId` is a `prn_…`, and rendering that is useless; it needs a
+     **principal → display name directory** projected for the workspace (Better Auth has
+     the users, `MembershipStore` has who is in the workspace, but nothing projects them).
+     That directory is the actual work.
+   - **Presence + typing indicators** — these would be the **first sanctioned client
+     writes to Jazz**. Every write today is backend-only (`allowInsert.never()` on all
+     three tables), which is why a read-ACL was the only policy needed. Adding them means
+     opening a narrow write path — a client may write only its own presence row, in its
+     own workspace — and that deserves the same care the read-ACL got, including a test
+     that one principal cannot forge another's presence.
+
+   **Value note:** presence, typing and attribution only pay off once a second human is in
+   the workspace. Unlike the read model — where "multiplayer by construction" bought
+   cross-*tab* sync immediately — these buy nothing solo, so they are worth doing properly
+   *together with* the client-write policy when there is a second user, rather than
+   piecemeal now.
 
 **Risk being managed:** jazz-tools is alpha, and this session alone surfaced four
 non-obvious behaviours (below). Making Jazz load-bearing for everything means an alpha

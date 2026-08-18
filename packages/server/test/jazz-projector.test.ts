@@ -75,6 +75,31 @@ describe("JazzProjector (Jazz 2.0 relational)", () => {
     expect(rows[0]?.text).toBe("");
   });
 
+  test("queued work is projected, so a mid-turn prompt doesn't appear to vanish", async () => {
+    // pi accepts a prompt sent while streaming and queues it as a follow-up. Without
+    // projecting queue_update the message simply disappears until the turn ends.
+    const bus = new InMemoryEventBus();
+    const projector = new JazzProjector(db, { eventBus: bus });
+    const r = ref("ses_queue", "Queue");
+    projector.ensureSession(r);
+
+    const emit = (event: unknown) =>
+      bus.publish({ type: "pi", sessionId: r.id, event } as never);
+    emit({ type: "message_start", message: { role: "assistant", content: [] } });
+    emit({ type: "queue_update", steering: [], followUp: ["do this next", "and this"] });
+
+    let rows: Array<{ queuedCount?: number; queuedText?: string; kind?: string }> = [];
+    for (let i = 0; i < 25; i++) {
+      rows = await db.all(app.activity.where({ sessionId: "ses_queue" }));
+      if ((rows[0]?.queuedCount ?? 0) > 0) break;
+      await new Promise((res) => setTimeout(res, 80));
+    }
+    expect(rows[0]?.queuedCount).toBe(2);
+    expect(rows[0]?.queuedText).toBe("do this next");
+    // The turn's own state is preserved — only the queue changed.
+    expect(rows[0]?.kind).toBe("thinking");
+  });
+
   test("progress events refine the live tool label", async () => {
     // The parent's activity row is the only thing a browser sees during a blocking
     // batch, so progress has to reach it or a multi-minute run looks stalled.
