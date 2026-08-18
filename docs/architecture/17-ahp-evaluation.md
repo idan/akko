@@ -1,19 +1,20 @@
-# 17 — Agent Host Protocol Evaluation
+# 17 — Agent Host Protocol Exploration
 
-## Decision
+## Exploration status
 
-**Support AHP as an experimental, northbound interoperability boundary; do not pivot
-Akko's core, canonical storage, first-party Jazz client, or node↔Hub replication protocol
-to AHP.**
+**No adoption decision has been made.** This document records where AHP appears useful,
+where it conflicts with Akko's current shape, and what we would need to learn before
+choosing whether to support it.
 
-AHP is a valuable abstraction and a strong independent validation of several Akko
+AHP is a promising abstraction and a strong independent validation of several Akko
 decisions: host authority, per-session serialization, display-ready state separated from
 the agent runtime, lazy subscriptions, immutable actions/reducers, and explicit reconnect
-semantics. It also gives Akko a credible path to clients we do not own (notably VS Code and
-the official TypeScript/Rust/Go/Kotlin/Swift clients).
+semantics. It could also provide a path to clients we do not own (notably VS Code and the
+official TypeScript/Rust/Go/Kotlin/Swift clients). Neither point establishes that the cost
+of another protocol surface is worthwhile for Akko.
 
-The right boundary is an **AHP adapter beside the Jazz projector**, fed by Akko's canonical
-store, mailbox, and runtime events:
+If Akko eventually supported AHP, the least invasive placement appears to be an **adapter
+beside the Jazz projector**, fed by Akko's canonical store, mailbox, and runtime events:
 
 ```text
                                       ┌─▶ JazzProjector ─▶ Jazz ─▶ Akko web app
@@ -26,8 +27,9 @@ pi AgentSession ─▶ runtime/EventBus ──┤
 canonical SQLite ────────┴── rebuilds both client-facing projections
 ```
 
-AHP should therefore become a supported **presentation and client-control protocol**, not
-Akko's internal domain model and not its durable representation of pi state.
+That is a candidate integration boundary, not a commitment. The analysis below also
+explains why AHP would not naturally replace Akko's internal domain model, durable pi
+state, first-party Jazz path, or node↔Hub replication.
 
 ## Evaluation snapshot
 
@@ -208,7 +210,7 @@ its SDK. ACP would only become relevant if Akko later hosts out-of-process ACP a
 8. **Draft churn.** The protocol explicitly makes no backward-compatibility promise yet.
    AHP types must not leak into `@akko/core`, SQLite schemas, or pi-facing runtime APIs.
 
-## Proposed Akko mapping
+## Candidate Akko mapping
 
 | Akko | AHP |
 |---|---|
@@ -231,15 +233,14 @@ its SDK. ACP would only become relevant if Akko later hosts out-of-process ACP a
 The exact URI mapping should be stable and persisted where it cannot be derived. AHP says
 UUIDs are typical, not that Akko must discard its prefixed ids.
 
-## Incremental implementation plan
+## Questions for any future proof of concept
 
-### Phase 0 — isolated compatibility spike
+There is no AHP implementation on the roadmap. If a concrete interoperability need makes
+it worth investigating further, an isolated proof of concept could create an `@akko/ahp`
+package, pin `@microsoft/agent-host-protocol` to an exact version, and expose an
+authenticated `/ahp` WebSocket without changing the web app or `@akko/core`.
 
-Create an `@akko/ahp` package, pin `@microsoft/agent-host-protocol` to an exact version,
-and add an authenticated `/ahp` WebSocket endpoint. Do not change the web app or
-`@akko/core`.
-
-Implement the smallest coherent host surface:
+The smallest useful experiment would cover:
 
 - `initialize`, `ping`, `subscribe`, `unsubscribe`, `listSessions`, and `reconnect`;
 - root/session/chat snapshots;
@@ -248,49 +249,42 @@ Implement the smallest coherent host surface:
 - `chat/turnStarted`, `chat/turnCancelled`, and `session/titleChanged` ingress through the
   mailbox;
 - markdown streaming, turn completion/error, and basic tool-call actions;
-- fresh-snapshot reconnect only (permitted by the spec) before adding a replay buffer;
-- capability declarations that advertise only what is genuinely implemented.
+- fresh-snapshot reconnect (permitted by the spec), without initially building replay;
+- only the capabilities genuinely implemented by the experiment.
 
-Use the official `AhpClient` and reducers as black-box contract tests. The spike passes
-only if it proves:
+The official `AhpClient` and reducers would make useful black-box probes. The experiment
+should answer, rather than presume:
 
-1. canonical history reconstructs a valid chat snapshot with stable ids;
-2. two official clients converge during one live turn;
-3. accepted/rejected optimistic actions reconcile correctly;
-4. reconnect returns a converged snapshot without duplicate turns;
-5. a viewer cannot mutate and a non-member cannot list/subscribe;
-6. no AHP action can bypass Akko attribution, authorization, or mailbox ordering;
-7. the existing HTTP+Jazz web path and tests remain unchanged.
+1. Can canonical history reconstruct a valid chat snapshot with stable ids without
+   distorting Akko's storage model?
+2. Can two official clients converge during a live turn while preserving mailbox order?
+3. Can accepted/rejected optimistic actions reconcile without pi events overtaking the
+   initiating action?
+4. Does reconnect converge without duplicate turns?
+5. Can workspace ACLs and human attribution remain intact despite not being native AHP
+   concepts?
+6. Can subagents map naturally to chats, or does the session/chat model become awkward?
+7. How much server infrastructure must Akko own given the absence of an official
+   TypeScript host library?
+8. Does maintaining AHP alongside HTTP+Jazz provide enough interoperability value to
+   justify a second client-facing projection and pre-1.0 churn?
 
-### Phase 1 — useful external-client support
+Only after those questions have concrete answers would it make sense to consider richer
+features such as replay buffers, queued/steering messages, elicitation, resource reads,
+terminals, changesets, customizations/MCP, client-provided tools, or telemetry.
 
-If the spike passes, add:
+## Current assessment
 
-- a bounded in-memory `serverSeq` replay buffer (snapshot remains the fallback);
-- queued/steering messages and mailbox feedback;
-- full response-part/tool/input-request mapping;
-- model and agent capability discovery;
-- subagents as tool-origin worker chats;
-- resource reads and content references needed by IDE clients.
-
-Label the endpoint experimental while AHP remains pre-1.0.
-
-### Phase 2 — coding-host features on demand
-
-Terminals, resource watches, changesets, customizations/MCP, client-provided tools, and
-telemetry are valuable but security-sensitive. Implement each only behind an explicit
-capability and Akko authorization policy; do not claim broad conformance up front.
-
-## Final assessment
-
-AHP is likely the right **standard public abstraction** for exposing Akko sessions to
-third-party clients. It captures more of the real agent UX than Akko's small private HTTP
-protocol and would prevent us from inventing private wire shapes for tools, elicitation,
+AHP is a credible candidate for a **standard public abstraction** if Akko develops a real
+need to serve third-party agent clients. It captures much more of the agent UX than Akko's
+small private HTTP protocol and offers useful vocabulary for tools, elicitation,
 terminals, attachments, changesets, and reconnect.
 
-It is not a reason to replace the architecture that already works. In fact, Akko's
-mailbox, durable/liveness split, canonical/projected-state split, and projector seam are
-what make AHP comparatively cheap to add. The prudent move is therefore:
+It also introduces substantial cost: a second live projection, ordered action sequencing,
+new durable identity associations, another authenticated endpoint, an awkward subagent
+mapping, and dependency on a rapidly changing draft. Akko currently has no demonstrated
+third-party-client requirement that clearly outweighs those costs.
 
-> **Adopt AHP at the edge, preserve Akko at the core, and prove the adapter with an
-> official-client compatibility spike before making it a promised interface.**
+> **Keep AHP as an informed option, not a decision. Preserve the compatible seams, watch
+> the specification mature, and revisit it when a concrete external-client or IDE use case
+> can justify a focused proof of concept.**

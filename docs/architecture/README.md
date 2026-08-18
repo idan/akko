@@ -30,7 +30,7 @@ scoping the system. They are meant to be read in order, but each stands alone.
 | [14 — Jazz Evaluation](./14-jazz-evaluation.md) | Bun-compat proven; Jazz as read/state projection (not source of truth); incremental adoption |
 | [15 — Status and Roadmap](./15-status-and-roadmap.md) | **Resume here** — current state, test coverage, how to run, prioritized next steps |
 | [16 — Authentication and Authorization](./16-auth.md) | Better Auth in-process (passkeys); cookie→principal at the edge; role-based `authorize()` |
-| [17 — Agent Host Protocol Evaluation](./17-ahp-evaluation.md) | Adopt AHP experimentally at the client edge, not as canonical storage or the node↔Hub protocol |
+| [17 — Agent Host Protocol Exploration](./17-ahp-evaluation.md) | Where AHP could help, where it conflicts, and questions to answer before any adoption decision |
 
 ## The one-paragraph summary
 
