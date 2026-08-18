@@ -15,15 +15,22 @@ per-socket event fan-out are deleted (~800 lines): the browser POSTs commands to
 measurements passed — write amplification is bounded (~24 writes/s while streaming), two
 tabs on one session stay in sync, and **reconnect converges** after going offline mid-turn.
 
-Recently closed: **Jazz token refresh** (an expired JWT used to mean a frozen UI, since
-step 3 removed the fallback read path) and **session rename** (the `rename` verb now has
-a handler plus inline editing in the list).
+Since then: **Jazz token refresh**, **session rename**, **subagents** (slices 1 and 2 —
+parallel batch delegation, agent-type presets, `stopSubagent`, concurrency caps), and
+**skills** (inventory, per-turn prompt budget, visibility toggle, plus workspace config
+moved into canonical SQLite).
 
-**Next action: unify step 4** — presence/typing + per-message attribution, now cheap
-because everything is already a Jazz table (see the plan below). Or pick from
-[C. Core features](#c-core-features-not-yet-built): **subagents** (`spawnSubagent` is
-still a stub) is the biggest capability gain, then the **task classifier** for
-`ModelRouter`, then `SkillsService`.
+**Next action — pick one:**
+
+- **Unify step 4** — presence/typing + per-message attribution. Cheap now that everything
+  is a Jazz table, and it is the last piece of the multiplayer story.
+- **Task classifier** ([C5](#c-core-features-not-yet-built)) — `ModelRouter` slice 2:
+  route by task type instead of a fixed model string. The cost/quality lever.
+- **Session lifecycle** ([C8](#c-core-features-not-yet-built)) — archive/delete plus
+  touch-friendly row controls. Note `delete` needs a decision first (soft vs hard),
+  because canonical entries live in SQLite and Jazz deletes are tombstones.
+- **Skills authoring UI** — skills now live in `workspace_skills`, so a small editor is
+  straightforward; today they arrive via files or direct DB insert.
 
 **Note:** the read model is disposable and the dev sync server is in-memory, so after any
 restart a session has a metadata row but **no messages** until something asks for them.
